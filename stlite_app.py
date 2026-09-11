@@ -18,17 +18,21 @@ def generate_python_code(prompt: str, model_name: str, api_key: str) -> str:
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     
     try:
+        # In Pyodide, urlopen might not raise HTTPError for 4xx/5xx
         with urllib.request.urlopen(req) as response:
+            body = response.read().decode('utf-8')
             if response.status == 200:
-                result_data = json.loads(response.read().decode('utf-8'))
+                result_data = json.loads(body)
                 content = result_data["candidates"][0]["content"]["parts"][0]["text"]
-                # Extract python code block
                 match = re.search(r'```python(.*?)```', content, re.DOTALL)
                 if match:
                     return match.group(1).strip()
                 return content.strip()
             else:
-                raise Exception(f"API Error: {response.status}")
+                raise Exception(f"API Error {response.status}: {body}")
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8')
+        raise Exception(f"HTTP Error {e.code}: {error_body}")
     except Exception as e:
         raise Exception(f"Request failed: {str(e)}")
 
