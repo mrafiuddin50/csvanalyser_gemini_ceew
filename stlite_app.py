@@ -6,7 +6,8 @@ import urllib.request
 
 def generate_python_code(prompt: str, model_name: str, api_key: str) -> str:
     """Calls Gemini REST API directly using standard urllib."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+    clean_key = api_key.strip()
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={clean_key}"
     
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
