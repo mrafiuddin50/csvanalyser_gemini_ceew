@@ -45,6 +45,8 @@ st.markdown("This app runs **entirely in your browser**! Upload a CSV file and a
 
 st.sidebar.title("API Configuration")
 user_api_key = st.sidebar.text_input("Enter Gemini API Key:", type="password", help="Get a free key from Google AI Studio")
+if st.sidebar.button("Enter", key="save_api_btn"):
+    st.sidebar.success("API Key Saved")
 
 st.sidebar.title("Model Configuration")
 selected_model = st.sidebar.selectbox(
@@ -82,11 +84,11 @@ if uploaded_file is not None:
 
     query = st.text_input("Ask a question about your data:")
 
-    if st.button("Analyze") and query:
+    if st.button("Analyse") and query:
         if not user_api_key:
             st.error("Please enter a Gemini API Key in the sidebar to run analysis.")
         else:
-            with st.spinner("Thinking (Gemini is writing Python code locally)..."):
+            with st.spinner("Processing..."):
                 # We bypass PandasAI entirely and use a lightweight custom code generator
                 system_prompt = f"""
 You are a Python data analyst. I have loaded a pandas dataframe named `df`.
