@@ -45,7 +45,7 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-st.title("Universal Data AI (WebAssembly)")
+st.title("Universal CSV Analyser (WebAssembly)")
 st.markdown("This app runs **entirely in your browser**! Upload a CSV file and ask questions.")
 
 st.sidebar.title("API Configuration")
