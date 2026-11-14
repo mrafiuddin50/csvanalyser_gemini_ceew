@@ -174,6 +174,14 @@ def extract_code(text: str) -> str:
 
 def generate_python_code(prompt: str, model_name: str, api_key: str) -> str:
     """Asks Gemini for code and returns just the code."""
+    code = extract_code(call_gemini_text(prompt, model_name, api_key))
+    if not code:
+        raise GeminiError("Gemini's reply did not contain any code. Try again.")
+    return code
+
+
+def call_gemini_text(prompt: str, model_name: str, api_key: str) -> str:
+    """Sends one prompt to Gemini and returns the reply text."""
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.0},
@@ -191,11 +199,8 @@ def generate_python_code(prompt: str, model_name: str, api_key: str) -> str:
     text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
     if not text.strip():
         reason = candidate.get("finishReason", "unknown")
-        raise GeminiError(f"Gemini returned no code (finish reason: {reason}). Try rephrasing the question.")
-    code = extract_code(text)
-    if not code:
-        raise GeminiError("Gemini's reply did not contain any code. Try again.")
-    return code
+        raise GeminiError(f"Gemini returned no text (finish reason: {reason}). Try rephrasing the question.")
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -548,7 +553,9 @@ def past_turns_for_prompt(history: list, anonymise: bool) -> list:
     usable = [
         (turn["sent_question"], turn["code"])
         for turn in history
-        if turn.get("code") and not turn.get("error") and turn.get("anonymise") == anonymise
+        # Code the user edited may contain values they typed, so it is never sent automatically.
+        if turn.get("code") and not turn.get("error") and not turn.get("edited")
+        and turn.get("anonymise") == anonymise
     ]
     return usable[-PAST_TURNS_IN_PROMPT:]
 
@@ -595,6 +602,265 @@ def analyse(question: str, df: pd.DataFrame, context: str, history: list, anonym
     return turn
 
 
+def run_edited_code(base_turn: dict, code: str, df: pd.DataFrame) -> dict:
+    """Runs code the user edited, locally only. Nothing is sent to Gemini."""
+    request = prepare_request(df, "", "", base_turn.get("anonymise", False))
+    turn = {
+        "question": base_turn["question"],
+        "sent_question": base_turn.get("sent_question", base_turn["question"]),
+        "anonymise": base_turn.get("anonymise", False),
+        "edited": True,
+        "sent_prompts": [],
+        "code": code,
+        "attempts": 1,
+        "outputs": [],
+        "result": None,
+        "error": None,
+    }
+    try:
+        turn["result"], turn["outputs"] = run_generated_code(code, request["work_df"], request["reverse"])
+    except Exception as exc:
+        turn["error"] = f"{type(exc).__name__}: {restore_names(str(exc), request['reverse'])}"
+    return turn
+
+
+def build_explain_prompt(schema: str, code: str) -> str:
+    """Prompt for 'Explain this code'. Contains only the column list and the code."""
+    return "\n".join([
+        "You are teaching a researcher who is learning Python and pandas.",
+        "Explain what the code below does, step by step, in plain English with UK spelling.",
+        "Refer to line numbers. Point out any assumptions the code makes about the data and anything "
+        "that could give a misleading result (for example, how missing values or duplicates are treated).",
+        "Keep it under 250 words. Do not rewrite the code.",
+        "",
+        "The code works on a pandas dataframe `df`.",
+        schema,
+        "",
+        "```python",
+        code,
+        "```",
+    ])
+
+
+# ---------------------------------------------------------------------------
+# Data profile (computed locally, never sent)
+# ---------------------------------------------------------------------------
+
+def _looks_like_dates(series: pd.Series) -> bool:
+    import warnings
+    sample = series.dropna().astype(str).str.strip()
+    sample = sample[sample.str.contains(r"\d", regex=True)].head(200)
+    if len(sample) < 3 or len(sample) < 0.5 * min(len(series.dropna()), 200):
+        return False
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            parsed = pd.to_datetime(sample, errors="coerce", format="mixed")
+        except (TypeError, ValueError):
+            parsed = pd.to_datetime(sample, errors="coerce")
+    return parsed.notna().mean() >= 0.8
+
+
+def profile_dataset(df: pd.DataFrame):
+    """Returns (summary dict, per-column table) describing data quality."""
+    rows = []
+    for col in df.columns:
+        series = df[col]
+        missing = int(series.isna().sum())
+        row = {
+            "column": str(col),
+            "type": str(series.dtype),
+            "missing": missing,
+            "missing %": round(100 * missing / len(series), 1) if len(series) else 0.0,
+            "distinct": int(series.nunique(dropna=True)),
+            "min": None, "median": None, "mean": None, "max": None,
+            "most common": "",
+            "note": "",
+        }
+        if pd.api.types.is_numeric_dtype(series) and not pd.api.types.is_bool_dtype(series):
+            values = series.dropna()
+            if len(values):
+                row.update({
+                    "min": float(values.min()), "median": float(values.median()),
+                    "mean": round(float(values.mean()), 3), "max": float(values.max()),
+                })
+        else:
+            counts = series.dropna().astype(str).value_counts().head(3)
+            row["most common"] = ", ".join(f"{value} ({count})" for value, count in counts.items())
+            if not pd.api.types.is_datetime64_any_dtype(series) and _looks_like_dates(series):
+                row["note"] = "Looks like dates stored as text"
+        if missing == len(series) and len(series):
+            row["note"] = "Entirely empty"
+        rows.append(row)
+
+    summary = {
+        "rows": len(df),
+        "columns": df.shape[1],
+        "duplicate rows": int(df.duplicated().sum()) if len(df.columns) else 0,
+        "missing cells": int(df.isna().sum().sum()),
+    }
+    return summary, pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# Synthetic sample dataset
+# ---------------------------------------------------------------------------
+
+SAMPLE_FILE_NAME = "synthetic_air_quality_2024.csv"
+SAMPLE_STATIONS = {   # fictional station: typical PM2.5 level
+    "Riverside": 55, "Old Market": 95, "Industrial Estate": 110,
+    "University Campus": 45, "Green Park": 35,
+}
+
+
+def make_sample_dataset(seed: int = 42) -> pd.DataFrame:
+    """Synthetic daily air-quality readings for five fictional stations in 2024.
+
+    Not real measurements. Deliberately includes problems to practise on:
+    missing values, inconsistent station names, dates stored as text and a few
+    duplicate rows.
+    """
+    rng = np.random.default_rng(seed)
+    dates = pd.date_range("2024-01-01", "2024-12-31", freq="D")
+    day = dates.dayofyear.to_numpy()
+    winter = 1 + 0.8 * np.cos(2 * np.pi * (day - 5) / 366)        # peaks in early January
+    frames = []
+    for station, level in SAMPLE_STATIONS.items():
+        n = len(dates)
+        wind = np.clip(rng.gamma(2.0, 1.2, n), 0.2, None)
+        pm25 = level * winter * rng.lognormal(0, 0.25, n) / np.sqrt(wind / 2.4)
+        frames.append(pd.DataFrame({
+            "date": dates.strftime("%Y-%m-%d"),
+            "station": station,
+            "pm25_ugm3": np.round(pm25, 1),
+            "pm10_ugm3": np.round(pm25 * rng.uniform(1.5, 2.2, n), 1),
+            "temperature_c": np.round(25 - 9 * np.cos(2 * np.pi * (day - 15) / 366) + rng.normal(0, 1.5, n), 1),
+            "relative_humidity_pct": np.round(np.clip(60 + 20 * np.sin(2 * np.pi * (day - 120) / 366)
+                                                      + rng.normal(0, 8, n), 10, 100), 0),
+            "wind_speed_ms": np.round(wind, 1),
+        }))
+    df = pd.concat(frames, ignore_index=True)
+
+    # Problems to practise on.
+    for col, share in (("pm25_ugm3", 0.04), ("pm10_ugm3", 0.06), ("relative_humidity_pct", 0.02)):
+        df.loc[rng.random(len(df)) < share, col] = np.nan
+    messy = rng.random(len(df)) < 0.02
+    df.loc[messy, "station"] = df.loc[messy, "station"].str.lower() + " "
+    duplicates = df.sample(5, random_state=seed)
+    return pd.concat([df, duplicates], ignore_index=True)
+
+
+# ---------------------------------------------------------------------------
+# Exporting a session
+# ---------------------------------------------------------------------------
+
+_EXPORT_SHIM = '''class _StreamlitStandIn:
+    """Lets the st.* calls written for the app run outside it."""
+    _charts = {"bar_chart": "bar", "line_chart": "line", "area_chart": "area"}
+
+    def __getattr__(self, name):
+        def show(*args, **kwargs):
+            if name == "pyplot":
+                plt.show()
+            elif name in self._charts and args:
+                pd.DataFrame(args[0]).plot(kind=self._charts[name], x=kwargs.get("x"), y=kwargs.get("y"))
+                plt.show()
+            else:
+                for arg in args:
+                    try:
+                        display(arg)   # Jupyter
+                    except NameError:
+                        print(arg)
+        return show
+
+
+st = _StreamlitStandIn()'''
+
+
+def exportable_turns(history: list) -> list:
+    """Successful turns, oldest first."""
+    return [t for t in history if t.get("code") and not t.get("error")]
+
+
+def _export_setup(reader_code: str, columns, turns: list) -> str:
+    lines = [
+        "import pandas as pd",
+        "import numpy as np",
+        "import matplotlib.pyplot as plt",
+        "",
+        _EXPORT_SHIM,
+        "",
+        "# Change the path if your data file is somewhere else.",
+        f"original_df = {reader_code}",
+    ]
+    if any(t.get("anonymise") for t in turns):
+        aliases = {str(k): v for k, v in make_aliases(columns).items()}
+        lines += [
+            "",
+            "# Some questions were asked with anonymised column names.",
+            f"ALIASES = {aliases!r}",
+        ]
+    return "\n".join(lines)
+
+
+def _export_cell(turn: dict) -> str:
+    start = "df = original_df.rename(columns=ALIASES)" if turn.get("anonymise") else "df = original_df.copy()"
+    return f"{start}\n\n{turn['code'].rstrip()}"
+
+
+def _question_label(number: int, turn: dict) -> str:
+    question = " ".join(str(turn["question"]).split())
+    return f"Question {number}: {question}" + (" (edited by you)" if turn.get("edited") else "")
+
+
+EXPORT_INTRO = (
+    "Analysis session exported from the Universal CSV Analyser.\n"
+    "Each section is one question; every section starts again from the original data, as the app does.\n"
+    "Results are not included, so this file can be shared without your data. "
+    "Run it next to your data file to reproduce them."
+)
+
+
+def build_script(history: list, reader_code: str, columns) -> str:
+    turns = exportable_turns(history)
+    parts = ['"""' + EXPORT_INTRO + '\n"""', _export_setup(reader_code, columns, turns)]
+    for number, turn in enumerate(turns, start=1):
+        parts.append(
+            f"# %% {_question_label(number, turn)}\n"
+            f"{_export_cell(turn)}\n\n"
+            "if result is not None:\n    print(result)"
+        )
+    return "\n\n\n".join(parts) + "\n"
+
+
+def build_notebook(history: list, reader_code: str, columns) -> str:
+    turns = exportable_turns(history)
+
+    def cell(kind, text):
+        lines = text.splitlines(keepends=True)
+        if kind == "markdown":
+            return {"cell_type": "markdown", "metadata": {}, "source": lines}
+        return {"cell_type": "code", "metadata": {}, "execution_count": None, "outputs": [], "source": lines}
+
+    cells = [
+        cell("markdown", "# Analysis session\n\n" + EXPORT_INTRO),
+        cell("code", _export_setup(reader_code, columns, turns)),
+    ]
+    for number, turn in enumerate(turns, start=1):
+        cells.append(cell("markdown", f"## {_question_label(number, turn)}"))
+        cells.append(cell("code", _export_cell(turn) + "\n\nresult"))
+    notebook = {
+        "cells": cells,
+        "metadata": {
+            "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+            "language_info": {"name": "python"},
+        },
+        "nbformat": 4,
+        "nbformat_minor": 4,
+    }
+    return json.dumps(notebook, indent=1, ensure_ascii=False)
+
+
 # ---------------------------------------------------------------------------
 # Loading files
 # ---------------------------------------------------------------------------
@@ -634,8 +900,15 @@ def sniff_delimiter(text: str, default: str = ",") -> str:
     return best
 
 
+ENCODING_CODECS = {"UTF-8": None, "UTF-8 with BOM": "utf-8-sig", "Windows-1252": "cp1252", "Latin-1": "latin-1"}
+
+
 def load_table(name: str, raw: bytes):
-    """Reads an uploaded CSV/TSV/TXT or Excel file. Returns (df, description)."""
+    """Reads an uploaded CSV/TSV/TXT or Excel file.
+
+    Returns (df, description, reader_code), where reader_code is the pandas call
+    that reads the same file, used in exported scripts and notebooks.
+    """
     lower = name.lower()
     if lower.endswith((".xlsx", ".xlsm")):
         with pd.ExcelFile(io.BytesIO(raw)) as book:
@@ -644,41 +917,101 @@ def load_table(name: str, raw: bytes):
         description = f"Excel sheet '{sheets[0]}'"
         if len(sheets) > 1:
             description += f" (only the first of {len(sheets)} sheets is used)"
-        return df, description
+        return df, description, f"pd.read_excel({name!r}, sheet_name={sheets[0]!r})"
 
     text, encoding = decode_bytes(raw)
     delimiter = sniff_delimiter(text, default="\t" if lower.endswith(".tsv") else ",")
     df = pd.read_csv(io.StringIO(text), sep=delimiter)
-    return df, f"{encoding}, {DELIMITER_NAMES[delimiter]}-separated"
+    args = [repr(name)]
+    if delimiter != ",":
+        args.append(f"sep={delimiter!r}")
+    if ENCODING_CODECS[encoding]:
+        args.append(f"encoding={ENCODING_CODECS[encoding]!r}")
+    return df, f"{encoding}, {DELIMITER_NAMES[delimiter]}-separated", f"pd.read_csv({', '.join(args)})"
 
 
 # ---------------------------------------------------------------------------
 # User interface
 # ---------------------------------------------------------------------------
 
+def _set_dataset(df, name=None, description=None, reader_code=None, is_sample=False):
+    """Stores the loaded data and resets everything that depended on the old data."""
+    st.session_state["history"] = []
+    st.session_state["df"] = df
+    st.session_state["file_name"] = name
+    st.session_state["file_description"] = description
+    st.session_state["reader_code"] = reader_code
+    st.session_state["is_sample"] = is_sample
+    st.session_state["profile"] = profile_dataset(df) if df is not None else None
+
+
 def _on_upload():
     uploaded = st.session_state.get("uploaded_csv")
-    st.session_state["history"] = []
     st.session_state["load_error"] = None
-    st.session_state["df"] = None
-    st.session_state["file_name"] = None
-    st.session_state["file_description"] = None
     if uploaded is None:
+        _set_dataset(None)
         return
     try:
-        df, description = load_table(uploaded.name, uploaded.getvalue())
+        df, description, reader_code = load_table(uploaded.name, uploaded.getvalue())
     except Exception as exc:
+        _set_dataset(None)
         st.session_state["load_error"] = (
             f"Could not read {uploaded.name}: {exc}. "
             "Check that it is a CSV, TSV or Excel (.xlsx) file with a header row."
         )
         return
     if df.empty and len(df.columns) == 0:
+        _set_dataset(None)
         st.session_state["load_error"] = f"{uploaded.name} has no columns."
         return
-    st.session_state["df"] = df
-    st.session_state["file_name"] = uploaded.name
-    st.session_state["file_description"] = description
+    _set_dataset(df, uploaded.name, description, reader_code)
+
+
+def _load_sample():
+    st.session_state["load_error"] = None
+    _set_dataset(make_sample_dataset(), SAMPLE_FILE_NAME, "synthetic sample data (not real measurements)",
+                 f"pd.read_csv({SAMPLE_FILE_NAME!r})", is_sample=True)
+
+
+def _add_turn(turn: dict):
+    st.session_state.setdefault("next_turn_id", 1)
+    turn["id"] = st.session_state["next_turn_id"]
+    st.session_state["next_turn_id"] += 1
+    st.session_state["history"].append(turn)
+
+
+def _find_turn(turn_id):
+    return next((t for t in st.session_state.get("history", []) if t.get("id") == turn_id), None)
+
+
+def _on_run_edited(turn_id):
+    turn = _find_turn(turn_id)
+    df = st.session_state.get("df")
+    if turn is None or df is None:
+        return
+    code = st.session_state.get(f"code_{turn_id}", turn["code"])
+    _add_turn(run_edited_code(turn, code, df))
+
+
+def _on_explain(turn_id):
+    turn = _find_turn(turn_id)
+    df = st.session_state.get("df")
+    if turn is None or df is None:
+        return
+    turn["explanation"], turn["explanation_error"] = None, None
+    api_key = (st.session_state.get("api_key") or "").strip()
+    if not api_key:
+        turn["explanation_error"] = "Enter a Gemini API key in the sidebar to get an explanation."
+        return
+    request = prepare_request(df, "", "", turn.get("anonymise", False))
+    code = st.session_state.get(f"code_{turn_id}", turn["code"])
+    prompt = build_explain_prompt(request["schema"], code)
+    turn["sent_prompts"].append(prompt)
+    model = st.session_state.get("model") or FALLBACK_MODELS[0]
+    try:
+        turn["explanation"] = restore_names(call_gemini_text(prompt, model, api_key), request["reverse"])
+    except GeminiError as exc:
+        turn["explanation_error"] = str(exc)
 
 
 def _on_key_change():
@@ -711,8 +1044,10 @@ def _show_value(value):
         st.write(value)
 
 
-def render_turn(turn: dict):
-    st.markdown(f"**Q:** {turn['question']}")
+def render_turn(turn: dict, df: pd.DataFrame):
+    turn_id = turn.get("id", 0)
+    label = " *(your edited version, run locally)*" if turn.get("edited") else ""
+    st.markdown(f"**Q:** {turn['question']}{label}")
 
     for name, args, kwargs in turn["outputs"]:
         try:
@@ -727,16 +1062,87 @@ def render_turn(turn: dict):
         st.error(f"Error during execution: {turn['error']}")
     else:
         _show_value(turn["result"])
+        if isinstance(turn["result"], (pd.DataFrame, pd.Series)):
+            st.download_button(
+                "Download result as CSV", data=turn["result"].to_csv().encode("utf-8"),
+                file_name=f"result_{turn_id}.csv", mime="text/csv", key=f"download_{turn_id}",
+            )
         if turn["attempts"] > 1:
             st.caption(f"The first attempt failed; fixed automatically after {turn['attempts']} attempts.")
 
     if turn["code"]:
-        with st.expander("View generated Python code"):
-            st.code(turn["code"], language="python")
-    with st.expander(f"What was sent to Gemini ({len(turn['sent_prompts'])} request(s))"):
-        for number, prompt in enumerate(turn["sent_prompts"], start=1):
-            st.markdown(f"**Request {number}**")
-            st.code(prompt, language="text")
+        with st.expander("Python code: view, edit, run or explain"):
+            code_key = f"code_{turn_id}"
+            st.text_area(
+                "You can edit this code and run your version.", value=turn["code"], key=code_key,
+                height=min(420, 60 + 22 * turn["code"].count("\n")),
+            )
+            run_col, explain_col = st.columns(2)
+            run_col.button(
+                "Run my version", key=f"run_{turn_id}", on_click=_on_run_edited, args=(turn_id,),
+                help="Runs the code above on your computer. Nothing is sent to Gemini.",
+            )
+            explain_col.button(
+                "Explain this code", key=f"explain_{turn_id}", on_click=_on_explain, args=(turn_id,),
+                help="Sends only the code above and the column names/types to Gemini.",
+            )
+            if st.checkbox("Show what 'Explain' will send", key=f"show_explain_{turn_id}"):
+                request = prepare_request(df, "", "", turn.get("anonymise", False))
+                current = st.session_state.get(code_key, turn["code"])
+                st.code(build_explain_prompt(request["schema"], current), language="text")
+                st.caption("If you typed any data values into the code, they would be sent too.")
+
+    if turn.get("explanation"):
+        st.markdown("**Explanation**")
+        st.markdown(turn["explanation"])
+    if turn.get("explanation_error"):
+        st.error(turn["explanation_error"])
+
+    if turn["sent_prompts"]:
+        with st.expander(f"What was sent to Gemini ({len(turn['sent_prompts'])} request(s))"):
+            for number, prompt in enumerate(turn["sent_prompts"], start=1):
+                st.markdown(f"**Request {number}**")
+                st.code(prompt, language="text")
+    else:
+        st.caption("Nothing was sent to Gemini for this answer.")
+
+
+DATA_HANDLING_NOTE = """
+**Sent to Google's Gemini:** your question, the context instructions in the sidebar, the column names
+and types, and the number of rows. For follow-up questions, your last few questions and the code that
+answered them. For *Explain this code*, the code itself.
+
+**Never sent:** the rows or values in your file, results, tables, charts, or the file itself. Error
+messages are cleaned of data values before the model sees them, and the generated code cannot reach
+the internet.
+
+**Your part:** anything you type into a question, the context box or edited code *is* sent, so avoid
+typing confidential values there. Turn on *Anonymise column names* if the column names themselves are
+sensitive.
+
+**Google's terms:** with a free-tier API key, Google may use what is sent to improve its products and
+human reviewers may read it. With a paid (billed) key, Google says it does not use prompts to improve
+its products. See the [Gemini API Additional Terms of Service](https://ai.google.dev/gemini-api/terms).
+"""
+
+
+def render_data_tabs(df: pd.DataFrame):
+    summary, columns_table = st.session_state.get("profile") or profile_dataset(df)
+    with st.expander("Your data (stays in your browser)", expanded=False):
+        preview_tab, profile_tab = st.tabs(["Preview", "Data profile"])
+        with preview_tab:
+            st.dataframe(df.head(20))
+        with profile_tab:
+            cols = st.columns(4)
+            for col, (name, value) in zip(cols, summary.items()):
+                col.metric(name.capitalize(), f"{value:,}")
+            if summary["duplicate rows"]:
+                st.warning(f"{summary['duplicate rows']:,} rows are exact duplicates of another row.")
+            notes = columns_table[columns_table["note"] != ""]
+            for _, row in notes.iterrows():
+                st.info(f"Column {row['column']!r}: {row['note'].lower()}.")
+            st.dataframe(columns_table, hide_index=True)
+            st.caption("Calculated in your browser. None of this is sent to Gemini.")
 
 
 def main():
@@ -750,7 +1156,13 @@ def main():
         unsafe_allow_html=True
     )
     st.title("Universal CSV Analyser (WebAssembly)")
-    st.markdown("This app runs **entirely in your browser**! Upload a CSV file and ask questions.")
+    st.markdown(
+        "Upload a CSV or Excel file and ask questions in plain English. **Your data stays in your browser.** "
+        "Only your question, your context instructions and the column names and types are sent to "
+        "Google's Gemini, which writes Python code that then runs here on your computer."
+    )
+    with st.expander("How your data is handled"):
+        st.markdown(DATA_HANDLING_NOTE)
 
     st.session_state.setdefault("history", [])
     st.session_state.setdefault("df", None)
@@ -767,7 +1179,9 @@ def main():
 
     st.sidebar.title("Model Configuration")
     model_options = st.session_state.get("models") or FALLBACK_MODELS
-    selected_model = st.sidebar.selectbox("Select Gemini Model:", model_options, index=0)
+    if st.session_state.get("model") not in model_options:
+        st.session_state["model"] = model_options[0]
+    selected_model = st.sidebar.selectbox("Select Gemini Model:", model_options, key="model")
     if not st.session_state.get("models"):
         st.sidebar.caption("Default list. Enter a working key to see the models it can use.")
 
@@ -775,20 +1189,32 @@ def main():
     st.sidebar.file_uploader(
         "Upload a CSV or Excel file", type=UPLOAD_TYPES, key="uploaded_csv", on_change=_on_upload,
     )
+    st.sidebar.button(
+        "No file? Try a synthetic sample", on_click=_load_sample,
+        help="Made-up daily air-quality readings for five fictional stations in 2024, "
+             "with some missing values, messy names and duplicates to practise on.",
+    )
 
     if st.session_state.get("load_error"):
         st.error(st.session_state["load_error"])
     df = st.session_state.get("df")
     if df is None:
-        st.info("Please upload a CSV or Excel file in the sidebar to begin.")
+        st.info("Please upload a CSV or Excel file in the sidebar to begin, or try the synthetic sample.")
         return
 
-    st.sidebar.success(f"Loaded {st.session_state.get('file_name') or 'file'} successfully!")
-    if st.session_state.get("file_description"):
-        st.sidebar.caption(f"Read as {st.session_state['file_description']}.")
+    if st.session_state.get("is_sample"):
+        st.sidebar.success("Loaded the synthetic sample dataset.")
+        st.warning("You are using **synthetic sample data**. It is made up for practice and is not real measurements.")
+        st.sidebar.download_button(
+            "Download the sample as CSV", data=df.to_csv(index=False).encode("utf-8"),
+            file_name=SAMPLE_FILE_NAME, mime="text/csv",
+        )
+    else:
+        st.sidebar.success(f"Loaded {st.session_state.get('file_name') or 'file'} successfully!")
+        if st.session_state.get("file_description"):
+            st.sidebar.caption(f"Read as {st.session_state['file_description']}.")
 
-    with st.expander("Preview Dataset"):
-        st.dataframe(df.head())
+    render_data_tabs(df)
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("Privacy")
@@ -808,8 +1234,9 @@ def main():
         value=DEFAULT_CONTEXT,
         height=150
     )
-    if st.sidebar.button("Clear question history"):
-        _clear_history()
+    st.sidebar.button("Clear question history", on_click=_clear_history)
+    # Filled at the end of the run, so a question answered in this run is included.
+    export_box = st.sidebar.container()
 
     query = st.text_input("Ask a question about your data:")
 
@@ -829,12 +1256,35 @@ def main():
                     query, df, saved_context, st.session_state["history"], anonymise,
                     llm=lambda prompt: generate_python_code(prompt, selected_model, user_api_key),
                 )
-            st.session_state["history"].append(turn)
+            _add_turn(turn)
 
     for index, turn in enumerate(reversed(st.session_state["history"])):
         if index:
             st.divider()
-        render_turn(turn)
+        render_turn(turn, df)
+
+    render_export(export_box, df)
+
+
+def render_export(box, df: pd.DataFrame):
+    turns_to_export = exportable_turns(st.session_state["history"])
+    if not turns_to_export:
+        return
+    box.markdown("---")
+    box.subheader("Export session")
+    box.caption(
+        f"{len(turns_to_export)} answered question(s) as code. Results are not included, "
+        "so the file can be shared without your data."
+    )
+    reader_code = st.session_state.get("reader_code") or "pd.read_csv('your_file.csv')"
+    box.download_button(
+        "Python script (.py)", data=build_script(st.session_state["history"], reader_code, df.columns),
+        file_name="analysis_session.py", mime="text/x-python",
+    )
+    box.download_button(
+        "Jupyter notebook (.ipynb)", data=build_notebook(st.session_state["history"], reader_code, df.columns),
+        file_name="analysis_session.ipynb", mime="application/x-ipynb+json",
+    )
 
 
 if __name__ == "__main__":
