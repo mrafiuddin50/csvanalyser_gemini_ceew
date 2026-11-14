@@ -1,0 +1,10 @@
+# For running the tests and the benchmark locally or in CI (Python 3.12).
+# The live app does not use this file: stlite installs its own packages (see index.html).
+pytest==9.0.2
+# Same Streamlit version as the live app runs under stlite 1.12.0.
+streamlit==1.65.0
+pandas==3.0.6
+matplotlib==3.10.8
+openpyxl==3.1.5
+nbformat==5.10.4
+ruff==0.15.1

@@ -17,10 +17,19 @@
         {
           requirements: ["pandas", "matplotlib", "openpyxl"],
           entrypoint: "stlite_app.py",
+          // Every Python file the app uses must be listed here.
           files: {
-            "stlite_app.py": {
-              url: "./stlite_app.py"
-            }
+            "stlite_app.py": { url: "./stlite_app.py" },
+            "csvanalyser/__init__.py": { url: "./csvanalyser/__init__.py" },
+            "csvanalyser/analysis.py": { url: "./csvanalyser/analysis.py" },
+            "csvanalyser/export.py": { url: "./csvanalyser/export.py" },
+            "csvanalyser/gemini.py": { url: "./csvanalyser/gemini.py" },
+            "csvanalyser/loading.py": { url: "./csvanalyser/loading.py" },
+            "csvanalyser/privacy.py": { url: "./csvanalyser/privacy.py" },
+            "csvanalyser/profiling.py": { url: "./csvanalyser/profiling.py" },
+            "csvanalyser/prompts.py": { url: "./csvanalyser/prompts.py" },
+            "csvanalyser/sample.py": { url: "./csvanalyser/sample.py" },
+            "csvanalyser/sandbox.py": { url: "./csvanalyser/sandbox.py" }
           },
         },
         document.getElementById("root")

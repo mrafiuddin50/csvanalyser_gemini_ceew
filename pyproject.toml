@@ -1,0 +1,13 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+    # Exported notebooks call plt.show(); harmless with the non-interactive test backend.
+    "ignore:FigureCanvasAgg is non-interactive:UserWarning",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint.isort]
+known-first-party = ["csvanalyser"]
