@@ -65,7 +65,7 @@ def _question_label(number: int, turn: dict) -> str:
 
 
 EXPORT_INTRO = (
-    "Analysis session exported from the Universal CSV Analyser.\n"
+    "Analysis session exported from the Tabular Data Analyser.\n"
     "Each section is one question; every section starts again from the original data, as the app does.\n"
     "Results are not included, so this file can be shared without your data. "
     "Run it next to your data file to reproduce them."

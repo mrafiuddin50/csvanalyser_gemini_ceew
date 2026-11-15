@@ -1,1 +1,1 @@
-"""Universal CSV Analyser: the logic behind stlite_app.py."""
+"""Tabular Data Analyser: the logic behind stlite_app.py."""

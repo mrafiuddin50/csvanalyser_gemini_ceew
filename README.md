@@ -1,4 +1,4 @@
-# Universal CSV Analyser
+# Tabular Data Analyser
 
 https://mrafiuddin50.github.io/csvanalyser_gemini_ceew/
 

@@ -248,7 +248,7 @@ def render_data_tabs(df: pd.DataFrame):
 
 
 def main():
-    st.set_page_config(layout="wide", page_title="Universal Data AI")
+    st.set_page_config(layout="wide", page_title="Tabular Data Analyser")
     st.markdown(
         """
         <div style='background-color: #f4f6f9; padding: 8px; border-radius: 6px; text-align: center; margin-bottom: 10px; border: 1px solid #e0e4e8;'>
@@ -257,7 +257,7 @@ def main():
         """,
         unsafe_allow_html=True
     )
-    st.title("Universal CSV Analyser (WebAssembly)")
+    st.title("Tabular Data Analyser")
     st.markdown(
         "Upload a CSV or Excel file and ask questions in plain English. **Your data stays in your browser.** "
         "Only your question, your context instructions and the column names and types are sent to "
