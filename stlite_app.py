@@ -213,6 +213,21 @@ its products. See the [Gemini API Additional Terms of Service](https://ai.google
 """
 
 
+MEMORY_TIPS = """
+This page runs a full Python environment inside your browser, which is what keeps your data on your
+computer. The cost is memory: expect the tab to use roughly **0.6 to 1 GB or more**, depending on your
+browser. Most of that is the Python setup itself, not your file.
+
+- **Use one tab.** Every open copy of this page runs its own Python and needs the same amount of memory again.
+- **Reload the page after a heavy session.** Memory used by large files and many analyses is only released
+  when the tab is reloaded or closed. Reloading clears your questions and data, so download the session
+  (sidebar, *Export session*) or any results you need first.
+- **Very large files** (hundreds of MB) may be more than the browser allows. Filter or sample the data
+  before uploading if the page becomes slow or the tab crashes.
+- **On a computer with little memory** (8 GB or less), close other heavy tabs and programs while you work.
+"""
+
+
 def render_data_tabs(df: pd.DataFrame):
     summary, columns_table = st.session_state.get("profile") or profile_dataset(df)
     with st.expander("Your data (stays in your browser)", expanded=False):
@@ -250,6 +265,8 @@ def main():
     )
     with st.expander("How your data is handled"):
         st.markdown(DATA_HANDLING_NOTE)
+    with st.expander("Memory and performance tips"):
+        st.markdown(MEMORY_TIPS)
 
     st.session_state.setdefault("history", [])
     st.session_state.setdefault("df", None)

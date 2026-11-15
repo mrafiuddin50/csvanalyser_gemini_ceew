@@ -23,6 +23,28 @@ Features:
 - Downloads: results as CSV, and the session as a Python script or Jupyter notebook
 - A synthetic sample dataset for practice
 
+## Memory use
+
+Running Python in the browser is memory-hungry. In one measurement (November 2026, stlite 1.12.0), the browser
+tab used:
+
+- about 510 MB for an empty Streamlit page under stlite;
+- about 645 MB for this app, just after loading.
+
+Other browsers report different figures; 1.1 GB has been seen. So most of the cost is stlite itself, not the
+app. Memory also grows as larger files are analysed, and it is only released when the tab is reloaded or
+closed.
+
+The app shows users a "Memory and performance tips" section:
+
+- use one tab;
+- reload after heavy sessions, exporting results first;
+- filter very large files before uploading;
+- close other heavy tabs on low-memory computers.
+
+For a large reduction, the page would need rebuilding without Streamlit, as plain HTML/JavaScript with Pyodide
+running pandas. A test page with Pyodide and pandas alone used about 280 MB.
+
 ## Project layout
 
 | Path | What it is |

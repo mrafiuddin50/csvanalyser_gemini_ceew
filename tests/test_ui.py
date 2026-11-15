@@ -109,6 +109,7 @@ def test_sample_profile_edit_explain_and_downloads():
     at = AppTest.from_file(APP, default_timeout=TIMEOUT).run()
     assert "Your data stays in your browser" in at.markdown[1].value
     assert any(e.label == "How your data is handled" for e in at.expander)
+    assert any(e.label == "Memory and performance tips" for e in at.expander)
     _button(at.sidebar, "No file? Try a synthetic sample").click().run()
     assert not at.exception, at.exception
     assert "synthetic sample data" in at.warning[0].value
