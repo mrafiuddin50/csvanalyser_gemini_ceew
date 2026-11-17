@@ -81,7 +81,8 @@ def test_full_turn_with_retry_and_history():
         assert at.session_state["history"][0]["attempts"] == 2
         # Rerun (e.g. any click) keeps the result on screen
         at.run()
-        assert [s.value for s in at.main.subheader] == ["Means"]
+        # The answer's own subheader (the audit section adds its own headings too)
+        assert [s.value for s in at.main.subheader].count("Means") == 1
         # AppTest calls this element "imgs" before Streamlit 1.65 and "image" from then on.
         assert len(at.main.get("image")) + len(at.main.get("imgs")) == 1
         assert len(at.dataframe) >= 2  # preview + result
@@ -114,9 +115,17 @@ def test_sample_profile_edit_explain_and_downloads():
     _button(at.sidebar, "No file? Try a synthetic sample").click().run()
     assert not at.exception, at.exception
     assert "synthetic sample data" in at.warning[0].value
-    assert any("Duplicate rows" == m.label for m in at.metric)
-    assert any("dates stored as text" in i.value for i in at.info)
-    assert any(t.label == "Data profile" for t in at.tabs)
+    # Data quality audit: verdict banner, audit tab and the 'what you can analyse' table
+    banner = at.warning[1].value
+    assert "Data quality: Needs Attention. Analysis readiness: READY WITH CAUTION." in banner
+    assert [t.label for t in at.tabs] == ["Data quality audit", "Preview", "Column details"]
+    assert any("**Overall assessment:** Needs Attention" in m.value for m in at.markdown)
+    assert any(m.label == "Warnings" and m.value == "2" for m in at.metric)
+    assert any(m.label == "Duplicate rows" for m in at.metric)              # Column details tab
+    assert any(s.value == "What you can analyse" for s in at.subheader)
+    report = at.session_state["audit"]
+    assert report.readiness == "READY WITH CAUTION"
+    assert at.session_state["audit_html"].startswith("<!DOCTYPE html>")
 
     with mock.patch("urllib.request.urlopen", fake_urlopen):
         at.sidebar.text_input[0].input("fake-key").run()
@@ -124,7 +133,8 @@ def test_sample_profile_edit_explain_and_downloads():
         _button(at, "Analyse").click().run()
         assert not at.exception, at.exception
         assert len(SENT) == 1
-        assert len(at.get("download_button")) == 4   # result CSV + sample CSV + .py + .ipynb
+        # result CSV + sample CSV + audit report + .py + .ipynb
+        assert len(at.get("download_button")) == 5
 
         # Edit the code and run locally: no new request
         turn_id = at.session_state["history"][0]["id"]
@@ -145,7 +155,11 @@ def test_sample_profile_edit_explain_and_downloads():
         assert len(at.session_state["history"][0]["sent_prompts"]) == 2
 
     sample = at.session_state["df"]
+    audit_phrases = [report.assessment, report.readiness, "exact copies", "written in more than one way",
+                     "outliers", "stored as text", "What you can analyse"]
     for prompt in SENT:
         for value in sample["station"].unique()[:5]:
             assert f"'{value}'" not in prompt or value in ("station",)
         assert str(sample["pm25_ugm3"].dropna().iloc[0]) not in prompt
+        for phrase in audit_phrases:                 # the audit stays in the browser
+            assert phrase not in prompt, phrase

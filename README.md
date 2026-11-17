@@ -18,10 +18,43 @@ Features:
 - Self-correcting retries when generated code fails
 - Follow-up questions
 - Optional anonymised column names
+- An automatic data quality audit when a file loads (see below)
 - A local data profile
 - Editable code, with an "Explain this code" button
 - Downloads: results as CSV, and the session as a Python script or Jupyter notebook
 - A synthetic sample dataset for practice
+
+## Data quality audit
+
+When a file loads, the app audits it in the browser (`csvanalyser/audit.py`), following the method of the
+*data-quality-auditor-v2* skill. The audit is rule-based and calculated on the full dataset. No AI is involved,
+and nothing from the audit is sent to Gemini.
+
+- **Banner:** gives the overall assessment (Good / Needs Attention / Poor) and the analysis readiness (READY /
+  READY WITH CAUTION / NOT READY).
+- **Data quality audit tab:** found under *Your data*, it contains:
+  - findings, split into critical issues, warnings and observations, each with affected records and impact;
+  - recommended actions;
+  - a column-level summary and statistics;
+  - **What you can analyse**: whether counts, averages, group comparisons, trends over time, correlations,
+    joining, maps and sharing are ready, need caution or are not possible, and why.
+- **HTML report:** a downloadable copy of the audit. To get a PDF, open it in a browser and use Print → Save as
+  PDF.
+
+The checks cover:
+
+- missing values and placeholder text;
+- duplicate rows and repeated IDs;
+- numbers or dates stored as text, mixed types, unreadable dates and day/month order;
+- impossible coordinates, out-of-range percentages and negative quantities (flagged for confirmation);
+- inconsistent category labels and rare categories;
+- possible personal data (emails, phone numbers, Aadhaar- and PAN-like patterns). These are counted only,
+  never shown;
+- outliers (1.5 × IQR), skew and strong correlations;
+- for time series, conflicting records per entity and date, and gaps in reporting.
+
+The audit is general-purpose and does not know the subject area. Treat its flags as prompts to check with someone
+who knows the data, not as proof of errors.
 
 ## Memory use
 
@@ -51,7 +84,7 @@ running pandas. A test page with Pyodide and pandas alone used about 280 MB.
 | --- | --- |
 | `index.html` | Loads stlite and lists every Python file the app uses |
 | `stlite_app.py` | The Streamlit page |
-| `csvanalyser/` | The app's logic: Gemini client, privacy rules and prompts, the sealed-off code runner, file loading, data profile, sample data, exports |
+| `csvanalyser/` | The app's logic: Gemini client, privacy rules and prompts, the sealed-off code runner, file loading, data quality audit, data profile, sample data, exports |
 | `tests/` | Automated tests (no API key needed; Gemini is faked) |
 | `benchmark/` | Known-answer questions for comparing models and prompts |
 

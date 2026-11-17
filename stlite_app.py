@@ -5,6 +5,7 @@ The logic lives in the csvanalyser package; this file only draws the page.
 import pandas as pd
 import streamlit as st
 
+from csvanalyser import audit
 from csvanalyser.analysis import analyse, past_turns_for_prompt, prepare_request, run_edited_code
 from csvanalyser.export import build_notebook, build_script, exportable_turns
 from csvanalyser.gemini import FALLBACK_MODELS, GeminiError, call_gemini_text, generate_python_code, list_models
@@ -30,6 +31,15 @@ def _set_dataset(df, name=None, description=None, reader_code=None, is_sample=Fa
     st.session_state["reader_code"] = reader_code
     st.session_state["is_sample"] = is_sample
     st.session_state["profile"] = profile_dataset(df) if df is not None else None
+    # Data quality audit: runs once per file, locally; never sent to Gemini.
+    st.session_state["audit"], st.session_state["audit_html"], st.session_state["audit_error"] = None, None, None
+    if df is not None:
+        try:
+            report = audit.run_audit(df, name or "data")
+            st.session_state["audit"] = report
+            st.session_state["audit_html"] = audit.build_html_report(report)
+        except Exception as exc:  # the audit must never stop people using their data
+            st.session_state["audit_error"] = f"{type(exc).__name__}: {exc}"
 
 
 def _on_upload():
@@ -228,21 +238,119 @@ browser. Most of that is the Python setup itself, not your file.
 """
 
 
+STATUS_ICONS = {audit.CAN: "✅ Ready", audit.CAREFUL: "⚠️ Use with caution", audit.CANNOT: "⛔ Not possible"}
+
+
+def _get_audit(df: pd.DataFrame):
+    report = st.session_state.get("audit")
+    if report is None and not st.session_state.get("audit_error"):
+        try:
+            report = audit.run_audit(df, st.session_state.get("file_name") or "data")
+            st.session_state["audit"] = report
+            st.session_state["audit_html"] = audit.build_html_report(report)
+        except Exception as exc:  # the audit must never stop people using their data
+            st.session_state["audit_error"] = f"{type(exc).__name__}: {exc}"
+    return report
+
+
+def render_audit_banner(report):
+    counts = (f"{len(report.by_severity(audit.CRITICAL))} critical issue(s), "
+              f"{len(report.by_severity(audit.WARNING))} warning(s), "
+              f"{len(report.by_severity(audit.OBSERVATION))} observation(s)")
+    text = (f"**Data quality: {report.assessment}. Analysis readiness: {report.readiness}.** {counts}. "
+            "Open **Your data → Data quality audit** to see what you can and cannot analyse.")
+    {audit.READY: st.success, audit.CAUTION: st.warning, audit.NOT_READY: st.error}[report.readiness](text)
+
+
+def _findings_section(title, findings, empty_text):
+    st.markdown(f"**{title}**")
+    if findings:
+        st.table(audit.findings_table(findings).set_index("Issue"))   # st.table wraps long text
+    else:
+        st.caption(empty_text)
+
+
+def render_audit(report):
+    crit, warn, obs = (report.by_severity(s) for s in (audit.CRITICAL, audit.WARNING, audit.OBSERVATION))
+    st.markdown(f"**Overall assessment:** {report.assessment} &nbsp;·&nbsp; "
+                f"**Analysis readiness:** {report.readiness}")
+    cols = st.columns(3)
+    cols[0].metric("Critical issues", len(crit))
+    cols[1].metric("Warnings", len(warn))
+    cols[2].metric("Observations", len(obs))
+    st.markdown(report.assessment_text)
+
+    st.subheader("What you can analyse")
+    caps = pd.DataFrame(report.capabilities)
+    caps["Status"] = caps["Status"].map(STATUS_ICONS)
+    st.table(caps[["Analysis", "Status", "Why"]].set_index("Analysis"))   # st.table wraps long text
+
+    st.subheader("Findings")
+    _findings_section("Critical issues", crit, "No critical issues identified by the checks performed.")
+    _findings_section("Warnings", warn, "No warnings identified by the checks performed.")
+    st.markdown("**Observations**")
+    if obs:
+        st.markdown("\n".join(
+            f"- **{f.issue}**" + (f" ({f.affected:,} records, {f.pct:.1f}%)" if f.pct is not None else "")
+            + f". {f.impact}" for f in obs))
+    else:
+        st.caption("No observations.")
+
+    st.subheader("Recommended actions")
+    if report.actions:
+        st.markdown("\n".join(f"{i}. {a}" for i, a in enumerate(report.actions, start=1)))
+    else:
+        st.caption("No actions needed.")
+
+    st.subheader(f"Analysis readiness: {report.readiness}")
+    st.markdown(report.readiness_text)
+
+    st.subheader("Column-level summary")
+    st.dataframe(audit.column_summary(report), hide_index=True)
+    if not report.stats.empty:
+        st.subheader("Statistics for numeric columns")
+        st.dataframe(report.stats, hide_index=True)
+    if not report.correlations.empty:
+        st.markdown("**Strongest correlations**")
+        st.dataframe(report.correlations, hide_index=True)
+
+    st.subheader("How these checks work")
+    st.markdown(
+        "Automatic, general-purpose checks run in your browser on the full dataset, following the "
+        "*data-quality-auditor-v2* method. Nothing here is sent to Gemini. Unusual values are flagged for "
+        "checking, not declared wrong, and values from columns that may hold personal information are never "
+        "shown. The checks do not know your subject area, so confirm findings with someone who knows the data.")
+    st.markdown("Checks performed:\n" + "\n".join(f"- {c}" for c in report.checks_done)
+                + ("\n\nChecks skipped:\n" + "\n".join(f"- {c}" for c in report.checks_skipped)
+                   if report.checks_skipped else ""))
+    stem = (report.file_name.rsplit(".", 1)[0] or "data").replace(" ", "_")
+    st.download_button(
+        "Download the audit report (HTML)", data=(st.session_state.get("audit_html")
+                                                  or audit.build_html_report(report)).encode("utf-8"),
+        file_name=f"data_quality_report_{stem}.html", mime="text/html",
+    )
+    st.caption("Open the report in any browser. To get a PDF, use the browser's Print → Save as PDF.")
+
+
 def render_data_tabs(df: pd.DataFrame):
     summary, columns_table = st.session_state.get("profile") or profile_dataset(df)
+    report = _get_audit(df)
+    if report is not None:
+        render_audit_banner(report)
     with st.expander("Your data (stays in your browser)", expanded=False):
-        preview_tab, profile_tab = st.tabs(["Preview", "Data profile"])
+        audit_tab, preview_tab, profile_tab = st.tabs(["Data quality audit", "Preview", "Column details"])
+        with audit_tab:
+            if report is not None:
+                render_audit(report)
+            else:
+                st.warning("The data quality audit could not be completed for this file. You can still analyse "
+                           f"the data. Details: {st.session_state.get('audit_error')}")
         with preview_tab:
             st.dataframe(df.head(20))
         with profile_tab:
             cols = st.columns(4)
             for col, (name, value) in zip(cols, summary.items()):
                 col.metric(name.capitalize(), f"{value:,}")
-            if summary["duplicate rows"]:
-                st.warning(f"{summary['duplicate rows']:,} rows are exact duplicates of another row.")
-            notes = columns_table[columns_table["note"] != ""]
-            for _, row in notes.iterrows():
-                st.info(f"Column {row['column']!r}: {row['note'].lower()}.")
             st.dataframe(columns_table, hide_index=True)
             st.caption("Calculated in your browser. None of this is sent to Gemini.")
 
