@@ -67,6 +67,15 @@ def _status_line(at):
     return next(c.value for c in at.caption if c.value.startswith("**Status:**"))
 
 
+ASK_TAB, DATA_TAB, EXPORT_TAB = "② Ask questions", "① Data & quality", "③ Export"
+
+
+def _open(at, key, label):
+    """Selects a tab, as a click would. From Streamlit 1.65 only the open tab's contents are built."""
+    at.session_state[key] = label
+    return at.run()
+
+
 def test_status_line_and_activity_log_track_each_action():
     SENT.clear()
     REPLIES[:] = ["x = float(df['station'].iloc[0])", "result = df['pm25_ugm3'].mean()"]
@@ -78,7 +87,8 @@ def test_status_line_and_activity_log_track_each_action():
     with mock.patch("urllib.request.urlopen", fake_urlopen):
         at.sidebar.text_input[0].input("fake-key").run()
         assert "API key works: 2 models available" in _status_line(at)
-        at.text_input[0].input("average pm25").run()
+        _open(at, "main_tabs", ASK_TAB)
+        at.text_input(key="query").input("average pm25").run()
         [b for b in at.button if b.label == "Analyse"][0].click().run()
         assert not at.exception, at.exception
     assert "Answered the question after 2 attempts" in _status_line(at)
@@ -97,7 +107,8 @@ def test_status_line_and_activity_log_track_each_action():
 def test_failures_are_reported_in_the_status_line():
     at = AppTest.from_file(APP, default_timeout=TIMEOUT).run()
     at.button(key="sample_sidebar").click().run()
-    at.text_input[0].input("average pm25").run()
+    _open(at, "main_tabs", ASK_TAB)
+    at.text_input(key="query").input("average pm25").run()
     [b for b in at.button if b.label == "Analyse"][0].click().run()          # no key entered
     assert "⚠️ Analysis not started: no API key entered" in _status_line(at)
     with mock.patch("urllib.request.urlopen", side_effect=OSError("offline")):
@@ -116,10 +127,11 @@ def test_full_turn_with_retry_and_history():
     at = AppTest.from_file(APP, default_timeout=TIMEOUT)
     at.session_state["df"] = df()
     at.session_state["file_name"] = "test.csv"
+    at.session_state["main_tabs"] = ASK_TAB
     with mock.patch("urllib.request.urlopen", fake_urlopen):
         at.run()
         at.sidebar.text_input[0].input("fake-key")
-        at.text_input[0].input("mean pm25 by site")
+        at.text_input(key="query").input("mean pm25 by site")
         at.run()
         # Key check fetched the model list; non-text models filtered out
         assert at.sidebar.selectbox[0].options == ["gemini-2.5-flash", "zz-other-model"]
@@ -137,9 +149,9 @@ def test_full_turn_with_retry_and_history():
         assert [s.value for s in at.main.subheader].count("Means") == 1
         # AppTest calls this element "imgs" before Streamlit 1.65 and "image" from then on.
         assert len(at.main.get("image")) + len(at.main.get("imgs")) == 1
-        assert len(at.dataframe) >= 2  # preview + result
+        assert len(at.dataframe) >= 1  # the result table
         # Follow-up question includes the previous question and code
-        at.text_input[0].input("how many rows?")
+        at.text_input(key="query").input("how many rows?")
         [b for b in at.button if b.label == "Analyse"][0].click().run()
         assert not at.exception, at.exception
         assert "Q: mean pm25 by site" in SENT[-1]
@@ -175,44 +187,57 @@ def test_sample_profile_edit_explain_and_downloads():
     for label in ["① Data & quality", "② Ask questions", "③ Export",
                   "Data quality audit", "Preview", "Column details"]:
         assert labels.count(label) == 1, label
-    # Example questions built from column names/types only
-    examples = [b.label for b in at.button if (b.key or "").startswith("example_")]
-    assert "Average pm25_ugm3 for each station" in examples
-    assert len(examples) == 5
     assert any("**Overall assessment:** Needs Attention" in m.value for m in at.markdown)
     assert any(m.label == "Warnings" and m.value == "2" for m in at.metric)
-    assert any(m.label == "Duplicate rows" for m in at.metric)              # Column details tab
     assert any(s.value == "What you can analyse" for s in at.subheader)
     report = at.session_state["audit"]
     assert report.readiness == "READY WITH CAUTION"
     assert at.session_state["audit_html"].startswith("<!DOCTYPE html>")
+    _open(at, "data_tabs", "Column details")
+    assert any(m.label == "Duplicate rows" for m in at.metric)
+    # Example questions built from column names/types only
+    _open(at, "main_tabs", ASK_TAB)
+    examples = [b.label for b in at.button if (b.key or "").startswith("example_")]
+    assert "Average pm25_ugm3 for each station" in examples
+    assert len(examples) == 5
     # Before any answer the notebook/script buttons are shown but inactive
+    _open(at, "main_tabs", EXPORT_TAB)
     downloads = {d.proto.label: d.proto.disabled for d in at.get("download_button")}
     assert downloads["Jupyter notebook (.ipynb)"] is True and downloads["Python script (.py)"] is True
 
     with mock.patch("urllib.request.urlopen", fake_urlopen):
         at.sidebar.text_input[0].input("fake-key").run()
-        at.text_input[0].input("average pm25 by station").run()
+        _open(at, "main_tabs", ASK_TAB)
+        at.text_input(key="query").input("average pm25 by station").run()
         _button(at, "Analyse").click().run()
         assert not at.exception, at.exception
         assert len(SENT) == 1
-        # result CSV, sample CSV, audit report (data tab and export tab), .ipynb, .py
-        assert len(at.get("download_button")) == 6
+        labels = {d.proto.label for d in at.get("download_button")}
+        assert {"Download result as CSV", "Download the sample as CSV"} <= labels
+        _open(at, "main_tabs", EXPORT_TAB)
         downloads = {d.proto.label: d.proto.disabled for d in at.get("download_button")}
         assert downloads["Jupyter notebook (.ipynb)"] is False and downloads["Python script (.py)"] is False
+        assert "Download the audit report (HTML)" in downloads
+        _open(at, "main_tabs", ASK_TAB)
         # The answer is a card with Result | Code | Sent to Gemini tabs
         labels = [t.label for t in at.tabs]
         assert {"Result", "Code", "Sent to Gemini (1)"} <= set(labels)
 
         # Edit the code and run locally: no new request
         turn_id = at.session_state["history"][0]["id"]
+        _open(at, f"card_tabs_{turn_id}", "Code")
         at.text_area(key=f"code_{turn_id}").input("result = df['pm25_ugm3'].max()").run()
         _button(at, "Run my version").click().run()
         assert not at.exception, at.exception
         assert len(SENT) == 1
         edited = at.session_state["history"][-1]
         assert edited["edited"] and edited["sent_prompts"] == []
+        _open(at, f"card_tabs_{edited['id']}", "Sent to Gemini (0)")
         assert any("Nothing was sent to Gemini" in c.value for c in at.caption)
+        # The edited text is kept while the answer's Code section is hidden and shown again
+        _open(at, f"card_tabs_{turn_id}", "Result")
+        _open(at, f"card_tabs_{turn_id}", "Code")
+        assert at.text_area(key=f"code_{turn_id}").value == "result = df['pm25_ugm3'].max()"
 
         # Explain the original answer's code
         at.checkbox(key=f"show_explain_{turn_id}").check().run()

@@ -119,6 +119,8 @@ def test_only_the_latest_answers_keep_their_results():
     at.session_state["file_name"] = "test.csv"
     at.session_state["history"] = [_turn(i, data.head(i)) for i in range(1, 12)]
     at.session_state["next_turn_id"] = 12
+    at.session_state["main_tabs"] = "② Ask questions"
+    at.session_state["card_tabs_11"] = "Code"              # where the "Run my version" button is
     at.run()
     at.button(key="run_11").click().run()                 # "Run my version" adds answer 12
     assert not at.exception, at.exception

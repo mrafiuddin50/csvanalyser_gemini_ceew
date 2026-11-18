@@ -291,6 +291,68 @@ def _show_value(value):
         st.write(value)
 
 
+def _render_result(turn: dict):
+    turn_id = turn.get("id", 0)
+    if turn.get("result_dropped"):
+        st.info(f"To save memory, only the latest {KEEP_RESULTS} answers keep their results. The question "
+                "and code are kept: open **Code** and press **Run my version** to see this result again.")
+    for name, args, kwargs in turn["outputs"]:
+        try:
+            if name == "image":
+                st.image(args[0])
+            else:
+                getattr(st, name)(*args, **kwargs)
+        except Exception as exc:
+            st.warning(f"Could not display an output (st.{name}): {exc}")
+    if turn["error"]:
+        st.error(f"Error during execution: {turn['error']}")
+        return
+    _show_value(turn["result"])
+    if isinstance(turn["result"], (pd.DataFrame, pd.Series)):
+        st.download_button(
+            "Download result as CSV", data=_result_csv(turn),
+            file_name=f"result_{turn_id}.csv", mime="text/csv", key=f"download_{turn_id}",
+        )
+    if turn["attempts"] > 1:
+        st.caption(f"The first attempt failed; fixed automatically after {turn['attempts']} attempts.")
+
+
+def _render_code(turn: dict, df: pd.DataFrame):
+    turn_id = turn.get("id", 0)
+    if not turn["code"]:
+        st.caption("No code was produced for this question.")
+        return
+    code_key = f"code_{turn_id}"
+    # The starting text goes into Session State rather than value=..., because the box's value is
+    # also written back on every run (_keep_inputs_of_hidden_tabs); doing both makes Streamlit warn.
+    st.session_state.setdefault(code_key, turn["code"])
+    st.text_area("You can edit this code and run your version.", key=code_key,
+                 height=min(420, 60 + 22 * turn["code"].count("\n")))
+    run_col, explain_col = st.columns(2)
+    run_col.button(
+        "Run my version", key=f"run_{turn_id}", on_click=_on_run_edited, args=(turn_id,),
+        help="Runs the code above on your computer. Nothing is sent to Gemini.",
+    )
+    explain_col.button(
+        "Explain this code", key=f"explain_{turn_id}", on_click=_on_explain, args=(turn_id,),
+        help="Sends only the code above and the column names/types to Gemini.",
+    )
+    if st.checkbox("Show what 'Explain' will send", key=f"show_explain_{turn_id}"):
+        request = prepare_request(df, "", "", turn.get("anonymise", False))
+        current = st.session_state.get(code_key, turn["code"])
+        st.code(build_explain_prompt(request["schema"], current), language="text")
+        st.caption("If you typed any data values into the code, they would be sent too.")
+
+
+def _render_sent(turn: dict):
+    if turn["sent_prompts"]:
+        for number, prompt in enumerate(turn["sent_prompts"], start=1):
+            st.markdown(f"**Request {number}**")
+            st.code(prompt, language="text")
+    else:
+        st.caption("Nothing was sent to Gemini for this answer.")
+
+
 def render_turn(turn: dict, df: pd.DataFrame):
     """One answer as a card: Result | Code | Sent to Gemini, with any explanation below."""
     turn_id = turn.get("id", 0)
@@ -301,60 +363,14 @@ def render_turn(turn: dict, df: pd.DataFrame):
         result_tab, code_tab, sent_tab = _tabs(["Result", "Code", f"Sent to Gemini ({sent})"], f"card_tabs_{turn_id}")
 
         with result_tab:
-            if turn.get("result_dropped"):
-                st.info(f"To save memory, only the latest {KEEP_RESULTS} answers keep their results. The question "
-                        "and code are kept: open **Code** and press **Run my version** to see this result again.")
-            for name, args, kwargs in turn["outputs"]:
-                try:
-                    if name == "image":
-                        st.image(args[0])
-                    else:
-                        getattr(st, name)(*args, **kwargs)
-                except Exception as exc:
-                    st.warning(f"Could not display an output (st.{name}): {exc}")
-            if turn["error"]:
-                st.error(f"Error during execution: {turn['error']}")
-            else:
-                _show_value(turn["result"])
-                if isinstance(turn["result"], (pd.DataFrame, pd.Series)):
-                    st.download_button(
-                        "Download result as CSV", data=_result_csv(turn),
-                        file_name=f"result_{turn_id}.csv", mime="text/csv", key=f"download_{turn_id}",
-                    )
-                if turn["attempts"] > 1:
-                    st.caption(f"The first attempt failed; fixed automatically after {turn['attempts']} attempts.")
-
+            if _visible(result_tab):
+                _render_result(turn)
         with code_tab:
-            if not turn["code"]:
-                st.caption("No code was produced for this question.")
-            else:
-                code_key = f"code_{turn_id}"
-                st.text_area(
-                    "You can edit this code and run your version.", value=turn["code"], key=code_key,
-                    height=min(420, 60 + 22 * turn["code"].count("\n")),
-                )
-                run_col, explain_col = st.columns(2)
-                run_col.button(
-                    "Run my version", key=f"run_{turn_id}", on_click=_on_run_edited, args=(turn_id,),
-                    help="Runs the code above on your computer. Nothing is sent to Gemini.",
-                )
-                explain_col.button(
-                    "Explain this code", key=f"explain_{turn_id}", on_click=_on_explain, args=(turn_id,),
-                    help="Sends only the code above and the column names/types to Gemini.",
-                )
-                if st.checkbox("Show what 'Explain' will send", key=f"show_explain_{turn_id}"):
-                    request = prepare_request(df, "", "", turn.get("anonymise", False))
-                    current = st.session_state.get(code_key, turn["code"])
-                    st.code(build_explain_prompt(request["schema"], current), language="text")
-                    st.caption("If you typed any data values into the code, they would be sent too.")
-
+            if _visible(code_tab):
+                _render_code(turn, df)
         with sent_tab:
-            if turn["sent_prompts"]:
-                for number, prompt in enumerate(turn["sent_prompts"], start=1):
-                    st.markdown(f"**Request {number}**")
-                    st.code(prompt, language="text")
-            else:
-                st.caption("Nothing was sent to Gemini for this answer.")
+            if _visible(sent_tab):
+                _render_sent(turn)
 
         if turn.get("explanation"):
             st.markdown("**Explanation**")
@@ -514,6 +530,36 @@ def _select_tab(key, label):
     st.session_state[key] = label
 
 
+def _visible(tab) -> bool:
+    """Whether to build a tab's contents.
+
+    Tabs that remember their selection (see _tabs) say whether they are open, so only the
+    visible tab is built and sent to the browser; each click then has far less to redraw.
+    Older Streamlit versions do not say (None), so every tab is built as before.
+    """
+    is_open = getattr(tab, "open", None)
+    return is_open is None or bool(is_open)
+
+
+# Inputs inside tabs, and the tab selections. When a tab is not drawn, Streamlit forgets the values
+# of the inputs in it, so a half-typed question or edited code would be lost on switching tabs.
+# Writing each value back at the start of every run keeps it. (The tab selections are written back
+# too, so a tab chosen by the app, such as Ask questions after clicking an example, also sticks in
+# Streamlit's test harness, which does not report tab selections.)
+KEPT_INPUTS = ("query", "main_tabs", "data_tabs", "code_", "card_tabs_")
+
+
+def _keep_inputs_of_hidden_tabs():
+    current = {str(t.get("id")) for t in st.session_state.get("history", [])}
+    for key in list(st.session_state.keys()):
+        if not key.startswith(KEPT_INPUTS):
+            continue
+        if key.startswith(("code_", "card_tabs_")) and key.rsplit("_", 1)[-1] not in current:
+            del st.session_state[key]          # belongs to an answer that has been cleared
+        else:
+            st.session_state[key] = st.session_state[key]
+
+
 # ---------------------------------------------------------------------------
 # Tour
 #
@@ -624,15 +670,20 @@ def render_data_section(df: pd.DataFrame):
     report = _get_audit(df)
     audit_tab, preview_tab, profile_tab = _tabs(["Data quality audit", "Preview", "Column details"], "data_tabs")
     with audit_tab:
-        if report is not None:
+        if not _visible(audit_tab):
+            pass
+        elif report is not None:
             render_audit(report)
         else:
             st.warning("The data quality audit could not be completed for this file. You can still analyse "
                        f"the data. Details: {st.session_state.get('audit_error')}")
     with preview_tab:
-        st.caption("The first 20 rows. This view stays in your browser.")
-        st.dataframe(df.head(20))
+        if _visible(preview_tab):
+            st.caption("The first 20 rows. This view stays in your browser.")
+            st.dataframe(df.head(20))
     with profile_tab:
+        if not _visible(profile_tab):
+            return
         cols = st.columns(4)
         for col, (name, value) in zip(cols, summary.items()):
             col.metric(name.capitalize(), f"{value:,}")
@@ -761,6 +812,7 @@ def main():
     render_logo()
     st.session_state.setdefault("history", [])
     st.session_state.setdefault("df", None)
+    _keep_inputs_of_hidden_tabs()
 
     render_header()
     # Filled in at the end of each run, so it always shows the latest action.
@@ -789,11 +841,14 @@ def main():
     with st.container(key="tour-tabs"):
         data_tab, ask_tab, export_tab = _tabs(MAIN_TABS, "main_tabs")
         with data_tab:
-            render_data_section(df)
+            if _visible(data_tab):
+                render_data_section(df)
         with ask_tab:
-            render_ask(df, api_key, model, anonymise, context)
+            if _visible(ask_tab):
+                render_ask(df, api_key, model, anonymise, context)
         with export_tab:
-            render_export(df)
+            if _visible(export_tab):
+                render_export(df)
 
     render_footer()
     _finish(status_slot)

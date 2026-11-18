@@ -1,6 +1,7 @@
 """Gemini client: key handling, model list, errors and code extraction."""
 import io
 import json
+import sys
 import urllib.error
 import urllib.request
 from unittest import mock
@@ -95,6 +96,96 @@ def test_blocked_and_empty_responses(body, expected):
 def test_unreachable_network():
     with mock.patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no route")):
         with pytest.raises(gemini.GeminiError, match="Could not reach Gemini"):
+            gemini.generate_python_code("p", "m", "k")
+
+
+@pytest.mark.parametrize("error", [
+    TimeoutError("timed out"),
+    urllib.error.URLError(TimeoutError("timed out")),
+    urllib.error.URLError("The read operation timed out"),
+])
+def test_slow_replies_end_with_a_clear_message(error):
+    with mock.patch("urllib.request.urlopen", side_effect=error):
+        with pytest.raises(gemini.GeminiError, match="did not reply within 120 seconds"):
+            gemini.generate_python_code("p", "m", "k")
+
+
+def test_time_limits_are_passed_on():
+    seen = []
+
+    def fake(req, *a, timeout=None, **k):
+        seen.append(timeout)
+        if req.get_method() == "GET":
+            return FakeResponse({"models": [{"name": "models/m", "supportedGenerationMethods": ["generateContent"]}]})
+        return FakeResponse(gemini_reply("result = 1"))
+    with mock.patch("urllib.request.urlopen", fake):
+        gemini.list_models("k")
+        gemini.generate_python_code("p", "m", "k")
+        gemini.call_gemini_text("p", "m", "k")
+    assert seen == [gemini.KEY_CHECK_TIMEOUT, gemini.ANSWER_TIMEOUT, gemini.ANSWER_TIMEOUT]
+
+
+class FakeXHR:
+    """Stands in for the browser's XMLHttpRequest (used when running inside stlite)."""
+    made = []
+    reply = (200, json.dumps(gemini_reply("```python\nresult = 1\n```")))
+    error = None
+
+    @classmethod
+    def new(cls):
+        xhr = cls()
+        xhr.headers, xhr.sent, xhr.timeout = {}, None, 0
+        cls.made.append(xhr)
+        return xhr
+
+    def open(self, method, url, is_async):
+        self.method, self.url, self.is_async = method, url, is_async
+
+    def setRequestHeader(self, name, value):
+        self.headers[name] = value
+
+    def send(self, body):
+        self.sent = body
+        if FakeXHR.error:
+            raise FakeXHR.error
+        self.status, self.responseText = FakeXHR.reply
+
+
+class FakeJsError(Exception):
+    """Like Pyodide's JsException for a DOMException named TimeoutError."""
+    name = "TimeoutError"
+
+
+def _in_browser():
+    FakeXHR.made, FakeXHR.error = [], None
+    fake_js = type(sys)("js")
+    fake_js.XMLHttpRequest = FakeXHR
+    return mock.patch.multiple(gemini, IN_BROWSER=True), mock.patch.dict(sys.modules, {"js": fake_js})
+
+
+def test_browser_route_sets_time_limit_and_header():
+    browser, js = _in_browser()
+    with browser, js, mock.patch("urllib.request.urlopen", side_effect=AssertionError("urllib used")):
+        assert gemini.generate_python_code("prompt", "gemini-x", " my-key ") == "result = 1"
+    xhr = FakeXHR.made[0]
+    assert (xhr.method, xhr.is_async, xhr.timeout) == ("POST", False, gemini.ANSWER_TIMEOUT * 1000)
+    assert xhr.url.endswith("/models/gemini-x:generateContent") and "my-key" not in xhr.url
+    assert xhr.headers["x-goog-api-key"] == "my-key"
+    assert json.loads(xhr.sent)["contents"][0]["parts"][0]["text"] == "prompt"
+
+
+def test_browser_route_time_limit_and_errors():
+    browser, js = _in_browser()
+    with browser, js:
+        FakeXHR.error = FakeJsError("Failed to execute 'send' on 'XMLHttpRequest'")
+        with pytest.raises(gemini.GeminiError, match="did not reply within 30 seconds"):
+            gemini.list_models("k")
+        assert FakeXHR.made[0].timeout == gemini.KEY_CHECK_TIMEOUT * 1000
+        FakeXHR.error, FakeXHR.reply = None, (0, "")
+        with pytest.raises(gemini.GeminiError, match="Could not reach Gemini"):
+            gemini.generate_python_code("p", "m", "k")
+        FakeXHR.reply = (429, json.dumps({"error": {"message": "Resource exhausted"}}))
+        with pytest.raises(gemini.GeminiError, match="quota or rate limit"):
             gemini.generate_python_code("p", "m", "k")
 
 

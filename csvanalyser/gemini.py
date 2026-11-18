@@ -2,12 +2,19 @@
 
 import json
 import re
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+
+
+# Time limits (seconds). Writing code with a large "thinking" model can take a while, so answers
+# get two minutes; checking a key only lists models. Each attempt at a question has its own limit.
+ANSWER_TIMEOUT = 120
+KEY_CHECK_TIMEOUT = 30
 
 
 # Shown before a key is entered, or if the model list cannot be fetched.
@@ -58,26 +65,62 @@ def describe_api_error(status: int, body: str) -> str:
     return f"Gemini returned error {status}: {message or body[:300]}"
 
 
-def _gemini_request(path: str, api_key: str, payload=None) -> dict:
+def _is_timeout(exc) -> bool:
+    reason = getattr(exc, "reason", exc)
+    text = f"{type(exc).__name__} {getattr(exc, 'name', '')} {reason}".lower()
+    return isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError) or "timed out" in text \
+        or "timeouterror" in text
+
+
+def _python_request(url: str, headers: dict, data, method: str, timeout: float):
+    """Sends a request with Python's own HTTP library. Returns (status, body text)."""
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        # In Pyodide, urlopen may return 4xx/5xx responses instead of raising.
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return getattr(response, "status", 200), response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", errors="replace")
+
+
+def _browser_request(url: str, headers: dict, data, method: str, timeout: float):
+    """Sends a request with the browser's XMLHttpRequest. Returns (status, body text).
+
+    Used inside the browser (stlite/Pyodide), where Python's urlopen ignores its time limit.
+    The app's Python runs in a web worker, where a synchronous request may have a time limit.
+    """
+    from js import XMLHttpRequest   # only exists inside the browser
+
+    xhr = XMLHttpRequest.new()
+    xhr.open(method, url, False)
+    xhr.timeout = int(timeout * 1000)
+    for name, value in headers.items():
+        xhr.setRequestHeader(name, value)
+    xhr.send(data.decode("utf-8") if data is not None else None)
+    if xhr.status == 0:
+        raise ConnectionError("no response")
+    return int(xhr.status), str(xhr.responseText)
+
+
+IN_BROWSER = sys.platform == "emscripten"
+
+
+def _gemini_request(path: str, api_key: str, payload=None, timeout: float = ANSWER_TIMEOUT) -> dict:
     """Calls the Gemini REST API. The key goes in a header, never in the URL."""
     headers = {"x-goog-api-key": api_key.strip()}
     data = None
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(
-        f"{GEMINI_BASE_URL}/{path}", data=data, headers=headers,
-        method="POST" if data is not None else "GET",
-    )
+    send = _browser_request if IN_BROWSER else _python_request
     try:
-        # In Pyodide, urlopen may return 4xx/5xx responses instead of raising.
-        with urllib.request.urlopen(req) as response:
-            status = getattr(response, "status", 200)
-            body = response.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
-        status = exc.code
-        body = exc.read().decode("utf-8", errors="replace")
+        status, body = send(f"{GEMINI_BASE_URL}/{path}", headers, data,
+                            "POST" if data is not None else "GET", timeout)
     except Exception as exc:
+        if _is_timeout(exc):
+            raise GeminiError(
+                f"Gemini did not reply within {timeout:.0f} seconds. Try again, or choose a faster model "
+                "(for example a 'flash' model) in the sidebar.") from None
         reason = getattr(exc, "reason", exc)
         raise GeminiError(f"Could not reach Gemini ({reason}). Check your internet connection.") from None
 
@@ -103,7 +146,7 @@ def list_models(api_key: str) -> list:
         path = "models?pageSize=1000"
         if page_token:
             path += "&pageToken=" + urllib.parse.quote(page_token)
-        data = _gemini_request(path, api_key)
+        data = _gemini_request(path, api_key, timeout=KEY_CHECK_TIMEOUT)
         for model in data.get("models", []):
             if "generateContent" not in model.get("supportedGenerationMethods", []):
                 continue
