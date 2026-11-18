@@ -1,0 +1,9 @@
+# Theme for running the app with plain Streamlit (local development).
+# The live site sets the same values in index.html (streamlitConfig).
+# CEEW brand colours on a white page: blue family only, CEEW grey text.
+[theme]
+base = "light"
+primaryColor = "#036493"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#333232"

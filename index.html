@@ -12,14 +12,15 @@
       #startup-note {
         position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 1000;
         max-width: min(560px, calc(100vw - 32px)); box-sizing: border-box;
-        padding: 12px 16px; border-radius: 8px; border: 1px solid #d0d7de;
-        background: #f6f8fa; color: #1f2328; font: 14px/1.45 Arial, Helvetica, sans-serif;
+        padding: 12px 16px; border-radius: 8px; border: 1px solid #CFCFCE; border-left: 4px solid #036493;
+        background: #FFFFFF; color: #333232; font: 14px/1.45 Arial, Helvetica, sans-serif;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); pointer-events: none;
       }
-      #startup-note strong { display: block; margin-bottom: 2px; }
-      @media (prefers-color-scheme: dark) {
-        #startup-note { background: #161b22; color: #e6edf3; border-color: #30363d; }
-      }
+      #startup-note strong { display: block; margin-bottom: 2px; color: #036493; }
+      body { background: #FFFFFF; }
+      /* stlite's loading notifications can get stuck on screen if the tab was in the background while
+         loading (their dismiss animation never runs). Hide them once the app is ready; errors stay visible. */
+      body.app-ready .Toastify__toast:not(.Toastify__toast--error) { display: none !important; }
     </style>
   </head>
   <body>
@@ -35,7 +36,10 @@
         var note = document.getElementById("startup-note");
         var ready = function () { return document.querySelector("#root h1"); };
         var observer = new MutationObserver(function () {
-          if (ready()) { note.remove(); observer.disconnect(); clearTimeout(slow); }
+          if (ready()) {
+            note.remove(); observer.disconnect(); clearTimeout(slow);
+            setTimeout(function () { document.body.classList.add("app-ready"); }, 4000);
+          }
         });
         observer.observe(document.getElementById("root"), { childList: true, subtree: true });
         var slow = setTimeout(function () {
@@ -67,7 +71,19 @@
             "csvanalyser/profiling.py": { url: "./csvanalyser/profiling.py" },
             "csvanalyser/prompts.py": { url: "./csvanalyser/prompts.py" },
             "csvanalyser/sample.py": { url: "./csvanalyser/sample.py" },
-            "csvanalyser/sandbox.py": { url: "./csvanalyser/sandbox.py" }
+            "csvanalyser/sandbox.py": { url: "./csvanalyser/sandbox.py" },
+            "csvanalyser/suggestions.py": { url: "./csvanalyser/suggestions.py" },
+            "csvanalyser/tour.py": { url: "./csvanalyser/tour.py" }
+          },
+          // CEEW brand colours on a white page: blue family only (never mix primary colours), CEEW grey text.
+          // Buttons use the blue shade #036493 because white text on the main blue #029BD6 lacks contrast.
+          // The sidebar and input boxes use a very light neutral grey so they stand out from the page.
+          streamlitConfig: {
+            "theme.base": "light",
+            "theme.primaryColor": "#036493",
+            "theme.backgroundColor": "#FFFFFF",
+            "theme.secondaryBackgroundColor": "#F0F2F6",
+            "theme.textColor": "#333232",
           },
         },
         document.getElementById("root")

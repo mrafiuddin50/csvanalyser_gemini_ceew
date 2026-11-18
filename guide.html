@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tabular Data Analyser: user guide</title>
+  <style>
+    /* CEEW brand colours on a white page: blue family only, CEEW grey text (no gradients, no mixed primaries). */
+    :root {
+      --page: #FFFFFF; --panel: #F0F2F6; --text: #333232; --grey: #7F7F7F; --line: #CFCFCE;
+      --blue: #029BD6; --blue-shade: #036493; --blue-dark: #023F5C; --blue-tint: #86BFDE;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--page); color: var(--text);
+           font: 16px/1.6 Arial, Helvetica, sans-serif; }
+    main { max-width: 860px; margin: 0 auto; padding: 32px 20px 64px; }
+    h1 { font-size: 2.1em; line-height: 1.2; margin: 0 0 6px; color: var(--text); }
+    h2 { font-size: 1.45em; color: var(--blue-shade); margin: 2.2em 0 0.4em; padding-top: 0.4em;
+         border-top: 1px solid var(--line); }
+    h3 { font-size: 1.1em; margin: 1.4em 0 0.3em; color: var(--text); }
+    a { color: var(--blue-shade); }
+    .lead { font-size: 1.1em; margin: 0 0 18px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 8px; }
+    .button { display: inline-block; padding: 9px 16px; border-radius: 8px; text-decoration: none;
+              font-weight: bold; border: 1px solid var(--blue-shade); color: var(--blue-shade);
+              background: #FFFFFF; cursor: pointer; font-size: 15px; }
+    .button.primary { background: var(--blue-shade); color: #FFFFFF; }
+    .note { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--blue-shade);
+            border-radius: 6px; padding: 12px 16px; margin: 14px 0; }
+    .toc { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 20px; }
+    .toc ol { margin: 6px 0; padding-left: 22px; }
+    figure { margin: 16px 0; }
+    figure img { width: 100%; border: 1px solid var(--line); border-radius: 6px; display: block; }
+    figure img.natural { width: auto; max-width: 100%; }   /* smaller screenshots: avoid blurry enlargement */
+    figcaption { color: var(--grey); font-size: 0.9em; margin-top: 6px; }
+    table { border-collapse: collapse; width: 100%; margin: 10px 0 16px; background: #FFFFFF; }
+    th, td { border: 1px solid var(--line); padding: 7px 9px; text-align: left; vertical-align: top; }
+    th { background: var(--blue-tint); color: var(--blue-dark); }
+    .step { display: inline-block; min-width: 28px; padding: 1px 8px; margin-right: 6px; border-radius: 14px;
+            background: var(--blue-shade); color: #FFFFFF; font-weight: bold; text-align: center; }
+    .muted { color: var(--grey); font-size: 0.92em; }
+    kbd { background: #FFFFFF; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-size: 0.9em; }
+    footer { margin-top: 48px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--grey); font-size: 0.9em; }
+
+    @media print {
+      body { background: #FFFFFF; font-size: 11pt; }
+      main { max-width: none; padding: 0; }
+      .actions, .no-print { display: none !important; }
+      h2 { break-before: page; border-top: none; }
+      h2.keep { break-before: auto; }
+      figure, table, .note, tr { break-inside: avoid; }
+      a { color: var(--text); text-decoration: none; }
+      a[href^="http"]::after { content: " (" attr(href) ")"; font-size: 0.85em; color: var(--grey); }
+    }
+    @page { margin: 18mm 16mm; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Tabular Data Analyser: user guide</h1>
+  <p class="lead">Ask questions about a CSV or Excel file in plain English, check whether the data is ready for
+    analysis, and learn from the Python code behind every answer, all without your data leaving your computer.</p>
+  <div class="actions">
+    <a class="button primary" href="./">Open the app</a>
+    <button class="button" onclick="window.print()">Print or save as PDF</button>
+  </div>
+  <p class="muted">Version 1.0 · November 2026. Inside the app, the <strong>🧭 Take the tour</strong> button gives a
+    two-minute version of this guide.</p>
+
+  <div class="toc">
+    <strong>Contents</strong>
+    <ol>
+      <li><a href="#what">What the app does</a></li>
+      <li><a href="#before">Before you start</a></li>
+      <li><a href="#steps">Step by step</a></li>
+      <li><a href="#audit">Understanding the data quality audit</a></li>
+      <li><a href="#privacy">How your data is handled</a></li>
+      <li><a href="#tips">Tips for good questions</a></li>
+      <li><a href="#trouble">Troubleshooting</a></li>
+      <li><a href="#practice">Practice exercises with the synthetic sample</a></li>
+    </ol>
+  </div>
+
+  <h2 id="what" class="keep">1. What the app does</h2>
+  <ul>
+    <li>Runs a complete Python environment <strong>inside your web browser</strong>. There is nothing to install,
+      and your file is never uploaded to a server.</li>
+    <li><strong>Audits your data</strong> as soon as it loads, and tells you which kinds of analysis it is ready
+      for.</li>
+    <li>Lets you <strong>ask questions in plain English</strong>. Google's Gemini writes Python (pandas) code for
+      the question, and the code runs on your computer to produce tables, numbers and charts.</li>
+    <li>Shows and explains the code, so you can <strong>learn from it, edit it and reuse it</strong>.</li>
+  </ul>
+  <p>It does <strong>not</strong> send your rows or values to Gemini. The model sees only your question, the
+    column names and types, and the number of rows. Section 5 has the details.</p>
+  <figure>
+    <img src="guide-images/01-welcome.jpg" alt="The app's welcome screen with three steps: load data, check quality, ask questions" />
+    <figcaption>The welcome screen. The sidebar is on the left; the three steps are in the middle.</figcaption>
+  </figure>
+
+  <h2 id="before">2. Before you start</h2>
+  <h3>A browser and a little patience the first time</h3>
+  <p>Use a recent version of Chrome, Edge, Firefox or Safari on a computer, not a phone. The first visit takes up
+    to a minute while Python downloads and starts; later visits are usually quicker. Expect the browser tab to use
+    roughly 0.6–1&nbsp;GB of memory, so keep the app open in <strong>one tab only</strong>.</p>
+  <h3>A Gemini API key</h3>
+  <p>You need your own key to ask questions. (Loading data and the data quality audit work without one.)</p>
+  <ol>
+    <li>Go to <a href="https://aistudio.google.com/apikey">Google AI Studio: API keys</a> and sign in with a Google
+      account.</li>
+    <li>Create a key and copy it.</li>
+    <li>In the app's sidebar under <strong>1 · Connect</strong>, paste the key and press <kbd>Enter</kbd>.</li>
+  </ol>
+  <div class="note"><strong>Keep your key private.</strong> Google advises treating the key like a password. The app
+    keeps it only in your browser for the current session and sends it only to Google.</div>
+  <div class="note"><strong>Free and paid keys are treated differently by Google.</strong> With a free-tier key,
+    Google may use what is sent (your questions, column names and generated code) to improve its products, and
+    human reviewers may read it. With a paid (billed) key, Google says it does not use prompts to improve its
+    products. See the <a href="https://ai.google.dev/gemini-api/terms">Gemini API Additional Terms of Service</a>
+    and check your organisation's guidance on which to use.</div>
+
+  <h2 id="steps">3. Step by step</h2>
+
+  <h3><span class="step">1</span>Load your data</h3>
+  <p>In the sidebar under <strong>2 · Data</strong>, upload a <strong>CSV, TSV, TXT or Excel (.xlsx)</strong>
+    file. The app detects the text encoding (for example UTF-8 or Windows-1252) and the separator (comma,
+    semicolon, tab or pipe) for you, and the sidebar shows how the file was read. For Excel workbooks, only the
+    first sheet is used.</p>
+  <p>No file to hand? Click <strong>Try the synthetic sample</strong>: a year of made-up daily air-quality
+    readings for five fictional stations, with deliberate problems to practise on. A yellow banner reminds you
+    that it is not real data.</p>
+
+  <h3><span class="step">2</span>Check your data quality</h3>
+  <p>As soon as the file loads, a progress box shows the app reading it and running the audit. A coloured banner
+    then gives two verdicts: <strong>data quality</strong> and <strong>analysis readiness</strong>. Open the
+    <strong>① Data &amp; quality</strong> tab for:</p>
+  <ul>
+    <li><strong>What you can analyse</strong>: counts, averages, group comparisons, trends over time,
+      correlations, joining with other data, maps and sharing, each marked <em>Ready</em>, <em>Use with
+      caution</em> or <em>Not possible</em>, with the reason;</li>
+    <li>the findings (critical issues, warnings and observations) and recommended actions;</li>
+    <li><strong>Preview</strong> (first 20 rows) and <strong>Column details</strong>;</li>
+    <li>a button to <strong>download the audit report</strong> to share with colleagues.</li>
+  </ul>
+  <figure>
+    <img src="guide-images/03-data-loaded.jpg" alt="The synthetic sample loaded: progress box, status line, sample warning, data quality banner and the three main tabs" />
+    <figcaption>After loading the synthetic sample: the completed progress box, the status line, the verdict banner
+      (Needs Attention, Ready with caution) and the three main tabs.</figcaption>
+  </figure>
+  <p>Section 4 explains how to read the audit.</p>
+
+  <h3><span class="step">3</span>Connect to Gemini</h3>
+  <p>Paste your API key under <strong>1 · Connect</strong> and press <kbd>Enter</kbd>. The app checks the key and,
+    if it works, lists the models it can use in the <strong>Model</strong> menu. A tick appears next to
+    <strong>1 · Connect</strong>. If the key is rejected, see <a href="#trouble">Troubleshooting</a>.</p>
+
+  <h3><span class="step">4</span>Ask a question</h3>
+  <p>Open the <strong>② Ask questions</strong> tab.</p>
+  <ul>
+    <li>Click one of the <strong>example questions</strong> (built from your column names) or type your own.</li>
+    <li>Open <strong>What will be sent to Gemini</strong> to see exactly what will leave your browser. It never
+      includes your rows or values.</li>
+    <li>Press <strong>Analyse</strong>. A progress box shows each step: asking Gemini for code, running it on your
+      computer and, if the code fails, asking Gemini to fix it (up to three attempts).</li>
+    <li>Ask follow-up questions; the app remembers your last few questions and the code that answered them.</li>
+  </ul>
+  <figure>
+    <img class="natural" src="guide-images/05-ask-questions.jpg" alt="The Ask questions tab: example question buttons, the question box, the What will be sent to Gemini panel and the Analyse button" />
+    <figcaption>The <strong>② Ask questions</strong> tab after clicking an example question.</figcaption>
+  </figure>
+
+  <h3><span class="step">5</span>Learn from the answer</h3>
+  <p>Each answer is a card with three tabs:</p>
+  <table>
+    <tr><th>Tab</th><th>What it shows</th></tr>
+    <tr><td>Result</td><td>The table, chart or number. Tables can be downloaded as CSV.</td></tr>
+    <tr><td>Code</td><td>The Python code. Edit it and press <strong>Run my version</strong> to try changes; this runs
+      on your computer and sends nothing. <strong>Explain this code</strong> asks Gemini for a plain-language,
+      line-by-line explanation, sending only the code and the column list.</td></tr>
+    <tr><td>Sent to Gemini</td><td>A record of every request made for that answer.</td></tr>
+  </table>
+
+  <h3><span class="step">6</span>Take your work away</h3>
+  <p>The <strong>③ Export</strong> tab saves the session as a <strong>Python script</strong> or <strong>Jupyter
+    notebook</strong> containing your questions and code. Results are not included, so the files can be shared
+    without sharing your data; run them next to your data file to reproduce the results. The audit report can
+    also be downloaded there.</p>
+  <p>Under the title, the <strong>status line</strong> shows the last action. The <strong>Activity log</strong> at
+    the bottom of the sidebar lists recent actions and how long each took.</p>
+  <figure>
+    <img src="guide-images/02-tour.jpg" alt="The Take the tour dialog showing step 1 of 7" />
+    <figcaption>The in-app tour (🧭 Take the tour) covers the same steps in seven short screens.</figcaption>
+  </figure>
+
+  <h2 id="audit">4. Understanding the data quality audit</h2>
+  <p>The audit runs automatically on the whole file, in your browser, using fixed rules (no AI). It follows the
+    <em>data-quality-auditor-v2</em> method.</p>
+  <h3>The two verdicts</h3>
+  <table>
+    <tr><th>Data quality</th><th>Meaning</th></tr>
+    <tr><td>Good</td><td>No warnings or critical issues found by the checks.</td></tr>
+    <tr><td>Needs Attention</td><td>At least one warning: something that could affect results if ignored.</td></tr>
+    <tr><td>Poor</td><td>At least one critical issue, such as an empty file, many duplicate rows or a mostly empty
+      table.</td></tr>
+  </table>
+  <table>
+    <tr><th>Analysis readiness</th><th>Meaning</th></tr>
+    <tr><td>READY</td><td>No material problems found for common analyses.</td></tr>
+    <tr><td>READY WITH CAUTION</td><td>Usable, but some analyses need care. Check the <em>What you can analyse</em>
+      table.</td></tr>
+    <tr><td>NOT READY</td><td>Resolve the critical issues before relying on any results.</td></tr>
+  </table>
+  <p>Readiness is <strong>provisional</strong>, because the app does not know what you plan to analyse. The
+    <em>What you can analyse</em> table is the better guide for a specific task.</p>
+  <figure>
+    <img src="guide-images/04-what-you-can-analyse.jpg" alt="The What you can analyse table for the synthetic sample, with each type of analysis marked Ready, Use with caution or Not possible and the reason" />
+    <figcaption>The <em>What you can analyse</em> table for the synthetic sample.</figcaption>
+  </figure>
+  <h3>Findings</h3>
+  <ul>
+    <li><strong>Critical issue:</strong> strong evidence of a problem that could invalidate results.</li>
+    <li><strong>Warning:</strong> a likely problem worth fixing or investigating, such as duplicate rows,
+      inconsistent labels ("Delhi" vs "delhi "), numbers stored as text, or dates written day/month/year that
+      Python would misread.</li>
+    <li><strong>Observation:</strong> a pattern worth knowing that is not necessarily a problem, such as possible
+      outliers, skewed distributions or strong correlations.</li>
+  </ul>
+  <div class="note">The audit is general-purpose and does not know your subject. Unusual values are flagged
+    <em>for checking</em>, not declared wrong. Confirm findings with someone who knows how the data was
+    collected. Possible personal information (emails, phone numbers, Aadhaar- or PAN-like numbers) is counted but
+    never shown.</div>
+
+  <h2 id="privacy">5. How your data is handled</h2>
+  <table>
+    <tr><th>Sent to Gemini</th><th>Never sent</th></tr>
+    <tr>
+      <td>Your question; the instructions in <em>3 · Settings</em>; column names and types; the number of rows; for
+        follow-ups, your recent questions and code; for <em>Explain this code</em>, the code.</td>
+      <td>The rows and values in your file; results, tables and charts; the file itself; the data quality
+        audit.</td>
+    </tr>
+  </table>
+  <ul>
+    <li><strong>What you type is sent.</strong> Avoid typing confidential values into questions, instructions or
+      edited code.</li>
+    <li><strong>Sensitive column names?</strong> Tick <em>Anonymise column names</em> in <em>3 · Settings</em>.
+      Gemini then sees col_1, col_2, … instead of the real names. Answers may be less accurate.</li>
+    <li><strong>Error messages are cleaned</strong> of data values before a retry, and the generated code is
+      blocked from reaching the internet.</li>
+    <li>Follow your organisation's rules on which data may be used with AI tools, and on consent and
+      confidentiality for survey or personal data.</li>
+  </ul>
+
+  <h2 id="tips">6. Tips for good questions</h2>
+  <ul>
+    <li><strong>Use the exact column names</strong> shown in the audit's column summary, for example "average
+      pm25_ugm3 by station".</li>
+    <li><strong>Say how to handle known problems</strong>, for example "treat station names case-insensitively",
+      "remove duplicate rows first" or "dates are day/month/year".</li>
+    <li><strong>Ask for the output you want:</strong> "show a bar chart", "return a table sorted by…" or "give a
+      single number".</li>
+    <li><strong>One question at a time.</strong> Build up with follow-ups ("now do the same by month").</li>
+    <li><strong>Check the code</strong>, especially filters and how missing values are treated, before using a
+      result in your work. <em>Explain this code</em> helps.</li>
+  </ul>
+
+  <h2 id="trouble">7. Troubleshooting</h2>
+  <table>
+    <tr><th>What you see</th><th>What to do</th></tr>
+    <tr><td>The page stays on "Starting…" for more than two minutes</td><td>Check your internet connection and
+      reload. Corporate networks sometimes block the files the app downloads; try another network.</td></tr>
+    <tr><td>"Gemini rejected the API key"</td><td>Copy the key again from Google AI Studio, with no extra spaces,
+      and press Enter.</td></tr>
+    <tr><td>"Quota or rate limit … reached"</td><td>Wait a minute and try again, or choose another model.
+      Free-tier keys have tighter limits.</td></tr>
+    <tr><td>"The selected model is not available"</td><td>Choose another model from the Model menu.</td></tr>
+    <tr><td>"Could not read …" when uploading</td><td>Check that the file is CSV, TSV, TXT or .xlsx with a
+      header row. Re-save it from Excel as "CSV UTF-8" if needed.</td></tr>
+    <tr><td>Dates or trends look wrong</td><td>Check the audit for a "day/month/year" warning and say how dates
+      are written in your question.</td></tr>
+    <tr><td>"Could not answer the question after 3 attempts"</td><td>Rephrase more specifically: name the columns
+      and say how to handle problems. Check the Code tab to see what went wrong.</td></tr>
+    <tr><td>The page becomes slow or the tab crashes</td><td>Close other copies of the app, reload after heavy
+      sessions (export your work first), and filter very large files before uploading.</td></tr>
+  </table>
+
+  <h2 id="practice">8. Practice exercises with the synthetic sample</h2>
+  <p>For self-study or training sessions. Load <strong>Try the synthetic sample</strong> first. The data is made
+    up, so there are no right answers to look up, but the audit will tell you what to watch for.</p>
+  <ol>
+    <li><strong>Read the audit.</strong> Which two warnings does it raise? Which analyses are marked <em>Use with
+      caution</em>, and why?</li>
+    <li><strong>Duplicates.</strong> Ask: "How many exact duplicate rows are there? Show them." Then ask for the
+      row count after removing them.</li>
+    <li><strong>Messy labels.</strong> Ask: "Average pm25_ugm3 for each station". Then ask again,
+      adding "treat station names case-insensitively and ignore extra spaces". Compare the two answers.</li>
+    <li><strong>Trends.</strong> Ask: "Show the monthly average pm25_ugm3 as a line chart." In the Code tab, find
+      where the dates are converted.</li>
+    <li><strong>Relationships.</strong> Ask: "Is pm25_ugm3 related to pm10_ugm3? Show a scatter plot and the
+      correlation." Why does a strong correlation not show that one causes the other?</li>
+    <li><strong>Edit and explain.</strong> In any answer's Code tab, change a number (for example a threshold),
+      press <em>Run my version</em>, then press <em>Explain this code</em>.</li>
+    <li><strong>Export.</strong> Download the session as a notebook and open it in Jupyter or VS Code.</li>
+  </ol>
+
+  <footer>
+    Tabular Data Analyser 1.0 · November 2026 ·
+    <a href="./">Open the app</a> ·
+    <a href="https://github.com/mrafiuddin50/csvanalyser_gemini_ceew">Source code</a> ·
+    Inspired by <a href="https://github.com/nipunbatra/vayuchat-webllm">VayuChat-WebLLM</a>
+    (IIT Gandhinagar Sustainability Lab).
+  </footer>
+</main>
+</body>
+</html>

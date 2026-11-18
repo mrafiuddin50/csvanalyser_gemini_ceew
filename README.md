@@ -18,6 +18,13 @@ Features:
 - Self-correcting retries when generated code fails
 - Follow-up questions
 - Optional anonymised column names
+- A **🧭 Take the tour** button: a seven-step walkthrough in a dialog, opened only on request
+- A printable user guide at [`guide.html`](https://mrafiuddin50.github.io/csvanalyser_gemini_ceew/guide.html),
+  with practice exercises for training sessions
+- Three main tabs: **① Data & quality**, **② Ask questions** (with example questions built from the column
+  names) and **③ Export**
+- Answers as cards with **Result / Code / Sent to Gemini** tabs
+- CEEW brand colours on a white page (blue family only, following the brand rule of not mixing primary colours)
 - An automatic data quality audit when a file loads (see below)
 - A local data profile
 - Editable code, with an "Explain this code" button
@@ -82,7 +89,9 @@ running pandas. A test page with Pyodide and pandas alone used about 280 MB.
 
 | Path | What it is |
 | --- | --- |
-| `index.html` | Loads stlite and lists every Python file the app uses |
+| `index.html` | Loads stlite, sets the theme and lists every Python file the app uses |
+| `guide.html`, `guide-images/` | The printable user guide and its screenshots |
+| `.streamlit/config.toml` | The same theme, for running locally with plain Streamlit |
 | `stlite_app.py` | The Streamlit page |
 | `csvanalyser/` | The app's logic: Gemini client, privacy rules and prompts, the sealed-off code runner, file loading, data quality audit, data profile, sample data, exports |
 | `tests/` | Automated tests (no API key needed; Gemini is faked) |

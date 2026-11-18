@@ -51,7 +51,12 @@ def df():
 def test_no_file_shows_info():
     at = AppTest.from_file(APP, default_timeout=TIMEOUT).run()
     assert not at.exception
-    assert "upload a CSV" in at.info[0].value
+    # Welcome screen with the three steps, sample and tour buttons
+    assert any(s.value == "Get started in three steps" for s in at.subheader)
+    assert at.button(key="sample_welcome").label == "Try the synthetic sample"
+    assert at.button(key="tour_welcome").label == "🧭 Take the tour"
+    assert at.button(key="tour_header").label == "🧭 Take the tour"
+    assert any("[Printable guide](guide.html)" in c.value for c in at.caption)      # footer
     # Status line and an empty activity log are always present
     assert any("**Status:** ready. Upload a file" in c.value for c in at.caption)
     assert any(e.label == "Activity log (0)" for e in at.sidebar.expander)
@@ -65,7 +70,7 @@ def test_status_line_and_activity_log_track_each_action():
     SENT.clear()
     REPLIES[:] = ["x = float(df['station'].iloc[0])", "result = df['pm25_ugm3'].mean()"]
     at = AppTest.from_file(APP, default_timeout=TIMEOUT).run()
-    [b for b in at.sidebar.button if b.label.startswith("No file?")][0].click().run()
+    at.button(key="sample_sidebar").click().run()
     assert not at.exception, at.exception
     assert "Loaded the synthetic sample: 1,835 rows; data quality: Needs Attention" in _status_line(at)
 
@@ -90,7 +95,7 @@ def test_status_line_and_activity_log_track_each_action():
 
 def test_failures_are_reported_in_the_status_line():
     at = AppTest.from_file(APP, default_timeout=TIMEOUT).run()
-    [b for b in at.sidebar.button if b.label.startswith("No file?")][0].click().run()
+    at.button(key="sample_sidebar").click().run()
     at.text_input[0].input("average pm25").run()
     [b for b in at.button if b.label == "Analyse"][0].click().run()          # no key entered
     assert "⚠️ Analysis not started: no API key entered" in _status_line(at)
@@ -154,17 +159,25 @@ def test_sample_profile_edit_explain_and_downloads():
         "This code groups the rows by station and averages PM2.5.",   # explanation
     ]
     at = AppTest.from_file(APP, default_timeout=TIMEOUT).run()
-    assert "Your data stays in your browser" in at.markdown[1].value
-    assert any(e.label == "How your data is handled" for e in at.expander)
-    assert any(e.label == "Memory and performance tips" for e in at.expander)
+    assert any("Your data never leaves your computer" in m.value for m in at.markdown)
+    # Help popover holds the data-handling note and the memory tips
+    assert any(m.value == "#### How your data is handled" for m in at.markdown)
+    assert any(m.value == "#### Memory and performance tips" for m in at.markdown)
     assert at.title[0].value == "Tabular Data Analyser"
-    _button(at.sidebar, "No file? Try a synthetic sample").click().run()
+    at.button(key="sample_sidebar").click().run()
     assert not at.exception, at.exception
     assert "synthetic sample data" in at.warning[0].value
     # Data quality audit: verdict banner, audit tab and the 'what you can analyse' table
     banner = at.warning[1].value
     assert "Data quality: Needs Attention. Analysis readiness: READY WITH CAUTION." in banner
-    assert [t.label for t in at.tabs] == ["Data quality audit", "Preview", "Column details"]
+    labels = [t.label for t in at.tabs]
+    for label in ["① Data & quality", "② Ask questions", "③ Export",
+                  "Data quality audit", "Preview", "Column details"]:
+        assert labels.count(label) == 1, label
+    # Example questions built from column names/types only
+    examples = [b.label for b in at.button if (b.key or "").startswith("example_")]
+    assert "Average pm25_ugm3 for each station" in examples
+    assert len(examples) == 5
     assert any("**Overall assessment:** Needs Attention" in m.value for m in at.markdown)
     assert any(m.label == "Warnings" and m.value == "2" for m in at.metric)
     assert any(m.label == "Duplicate rows" for m in at.metric)              # Column details tab
@@ -180,7 +193,11 @@ def test_sample_profile_edit_explain_and_downloads():
         assert not at.exception, at.exception
         assert len(SENT) == 1
         # result CSV + sample CSV + audit report + .py + .ipynb
-        assert len(at.get("download_button")) == 5
+        # result CSV, sample CSV, audit report (data tab and export tab), .py, .ipynb
+        assert len(at.get("download_button")) == 6
+        # The answer is a card with Result | Code | Sent to Gemini tabs
+        labels = [t.label for t in at.tabs]
+        assert {"Result", "Code", "Sent to Gemini (1)"} <= set(labels)
 
         # Edit the code and run locally: no new request
         turn_id = at.session_state["history"][0]["id"]
