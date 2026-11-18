@@ -26,9 +26,9 @@
     {
       key: "tour-connect", sidebar: true, side: "right",
       title: "1 · Connect to Gemini",
-      text: "Paste your Gemini API key (free from Google AI Studio) and press Enter. The app checks it and lists " +
-        "the models your key can use. With a <b>free-tier</b> key, Google may use what is sent to improve its " +
-        "products; see <i>Help</i>.",
+      text: "CEEW has <b>Gemini Pro</b>. Get your API key from " +
+        "<a href=\"https://aistudio.google.com/\" target=\"_blank\" rel=\"noopener\">aistudio.google.com</a>, " +
+        "paste it here and press Enter. The app checks the key and lists the models it can use.",
     },
     {
       key: "tour-data", sidebar: true, side: "right", offerSample: true,
@@ -212,7 +212,11 @@
       await wait(600);
       start("tour-status");
     });
-    popover.footerButtons.insertBefore(button, popover.footerButtons.firstChild);
+    // Its own full-width row between the explanation and the Back/Next buttons.
+    var row = document.createElement("div");
+    row.className = "tda-tour-sample-row";
+    row.appendChild(button);
+    popover.wrapper.insertBefore(row, popover.footer);
   }
 
   function makeDriver() {

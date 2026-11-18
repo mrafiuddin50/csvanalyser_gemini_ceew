@@ -52,6 +52,18 @@ def test_tour_has_a_notebook_download_step():
     assert "Jupyter notebook (.ipynb)" in TOUR_JS
 
 
+def test_connect_step_points_to_ceew_gemini_pro_access():
+    assert "CEEW has <b>Gemini Pro</b>." in TOUR_JS
+    assert "Gemini Enterprise" not in TOUR_JS
+    assert 'href=\\"https://aistudio.google.com/\\" target=\\"_blank\\" rel=\\"noopener\\"' in TOUR_JS
+
+
+def test_sample_button_has_its_own_row():
+    assert "popover.wrapper.insertBefore(row, popover.footer)" in TOUR_JS
+    css = (ROOT / "tour.css").read_text(encoding="utf-8")
+    assert ".tda-tour-sample-row" in css and "width: 100%" in css
+
+
 def test_only_one_tour_button_on_the_page():
     assert APP.count("tour_button(") == 2      # the function definition and one call (in the header)
 
