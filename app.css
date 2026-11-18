@@ -1,0 +1,43 @@
+/* CEEW logo (top left): Streamlit caps it at 32 px tall, too small to read "THE COUNCIL".
+   In the sidebar and, when the sidebar is collapsed, in the top bar. */
+[data-testid="stSidebarLogo"],
+[data-testid="stHeaderLogo"] {
+  height: 3rem !important;
+  max-height: 3rem !important;
+  width: auto !important;
+  max-width: none !important;
+}
+
+/* Layout tweaks for phones and narrow screens (Streamlit's own styles do the rest). */
+
+@media (max-width: 640px) {
+  /* Less empty space above the title, and a little more room either side. */
+  [data-testid="stMainBlockContainer"] {
+    padding-top: 3.5rem !important;
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+
+  /* A smaller title so it does not fill the first screen. */
+  .st-key-tour-header h1 { font-size: 2rem !important; line-height: 1.15 !important; }
+
+  /* Keep "Take the tour", "Printable guide" and "Help" on one wrapping row
+     instead of one button per line. */
+  .st-key-tour-header [data-testid="stHorizontalBlock"] {
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    gap: 0.5rem !important;
+  }
+  .st-key-tour-header [data-testid="stColumn"] {
+    width: auto !important;
+    flex: 0 0 auto !important;
+    min-width: 0 !important;
+  }
+
+  /* Wide tables scroll sideways inside their box rather than squeezing the text. */
+  [data-testid="stTable"] { overflow-x: auto; }
+
+  /* Long example questions wrap onto two lines instead of running past the button. */
+  .st-key-tour-examples button { height: auto !important; min-height: 2.5rem; }
+  .st-key-tour-examples button p { white-space: normal !important; text-align: left; }
+}

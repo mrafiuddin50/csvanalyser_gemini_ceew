@@ -2,6 +2,7 @@
 
 The logic lives in the csvanalyser package; this file only draws the page.
 """
+import os
 import time
 
 import pandas as pd
@@ -716,8 +717,22 @@ def render_footer():
     )
 
 
+LOGO_PATH = "assets/ceew-logo.png"
+
+
+def render_logo():
+    """CEEW logo in the top-left corner (stays visible on phones when the sidebar is collapsed)."""
+    if not os.path.exists(LOGO_PATH):
+        return
+    try:
+        st.logo(LOGO_PATH, size="large", link="https://www.ceew.in")
+    except TypeError:          # older Streamlit without the size option
+        st.logo(LOGO_PATH, link="https://www.ceew.in")
+
+
 def main():
     st.set_page_config(layout="wide", page_title="Tabular Data Analyser")
+    render_logo()
     st.session_state.setdefault("history", [])
     st.session_state.setdefault("df", None)
 

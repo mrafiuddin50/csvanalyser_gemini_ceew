@@ -150,10 +150,29 @@
     }
   }
 
-  function openSidebar() {
+  function sidebarOpen() {
+    var sidebar = document.querySelector('[data-testid="stSidebar"]');
+    return !!sidebar && sidebar.getAttribute("aria-expanded") === "true";
+  }
+
+  // A collapsed sidebar is slid off-screen, not hidden, so check its state rather than visibility.
+  async function openSidebar() {
+    if (sidebarOpen()) return;
     var opener = document.querySelector('[data-testid="stExpandSidebarButton"]') ||
       document.querySelector('[data-testid="stSidebarCollapsedControl"] button');
-    if (opener && !isVisible(section("tour-connect"))) opener.click();
+    if (opener) {
+      opener.click();
+      await wait(400);   // let it slide in before measuring
+    }
+  }
+
+  // On phones the open sidebar covers most of the page, so close it for main-page steps.
+  function isNarrow() { return window.innerWidth < 768; }
+
+  function closeSidebar() {
+    if (!sidebarOpen()) return;
+    var closer = document.querySelector('[data-testid="stSidebarCollapseButton"] button');
+    if (closer) closer.click();
   }
 
   function buildSteps() {
@@ -168,7 +187,12 @@
 
   // Gets the page ready for a step (sidebar open, right tab selected); returns its element or null.
   async function prepare(step) {
-    if (step.sidebar) openSidebar();
+    if (step.sidebar) {
+      await openSidebar();
+    } else if (isNarrow()) {
+      closeSidebar();
+      await wait(350);   // let the sidebar slide away before measuring the page
+    }
     if (step.tab) {
       clickTab(step.tab);
       if (step.subTab) { await wait(300); clickTab(step.subTab); }
@@ -186,7 +210,13 @@
     while (index >= 0 && index < active.length) {
       var el = await prepare(active[index]);
       if (el) {
+        // Scroll the section into view ourselves: switching tabs redraws the page, which can undo
+        // driver.js's own scrolling (seen on phones). Tall sections are shown from their top.
+        var tall = el.getBoundingClientRect().height > window.innerHeight * 0.6;
+        el.scrollIntoView({ block: tall ? "start" : "center" });
+        await wait(250);
         if (driverObj.isActive()) driverObj.moveTo(index); else driverObj.drive(index);
+        setTimeout(function () { if (driverObj.isActive()) driverObj.refresh(); }, 700);
         return;
       }
       index += direction;

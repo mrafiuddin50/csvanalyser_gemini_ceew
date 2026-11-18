@@ -43,3 +43,9 @@
 .driver-popover.tda-tour button.tda-tour-sample:hover { background: #86BFDE; color: #023F5C; border-color: #023F5C; }
 .driver-popover.tda-tour button.tda-tour-sample:disabled { cursor: wait; opacity: 0.75; }
 .driver-popover.tda-tour .driver-popover-close-btn { color: #7F7F7F; }
+
+/* Phones: keep the tour bubble inside the screen. */
+@media (max-width: 640px) {
+  .driver-popover.tda-tour { max-width: calc(100vw - 24px); }
+  .driver-popover.tda-tour .driver-popover-description { font-size: 0.9rem; }
+}

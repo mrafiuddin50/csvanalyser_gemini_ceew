@@ -41,6 +41,16 @@
     kbd { background: #FFFFFF; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-size: 0.9em; }
     footer { margin-top: 48px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--grey); font-size: 0.9em; }
 
+    /* Phones */
+    @media (max-width: 600px) {
+      main { padding: 20px 14px 48px; }
+      h1 { font-size: 1.7em; }
+      h2 { font-size: 1.3em; }
+      .actions .button { flex: 1 1 auto; text-align: center; }
+      table { display: block; overflow-x: auto; }
+      th, td { padding: 6px 7px; }
+    }
+
     @media print {
       body { background: #FFFFFF; font-size: 11pt; }
       main { max-width: none; padding: 0; }

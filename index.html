@@ -10,6 +10,7 @@
     <!-- Guided tour: driver.js (MIT licence, version pinned) plus our steps and styles -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/driver.js@1.10.2/dist/driver.css" />
     <link rel="stylesheet" href="./tour.css" />
+    <link rel="stylesheet" href="./app.css" />
     <script src="https://cdn.jsdelivr.net/npm/driver.js@1.10.2/dist/driver.js.iife.js"></script>
     <script src="./tour.js" defer></script>
     <style>
@@ -66,6 +67,7 @@
           // Every Python file the app uses must be listed here.
           files: {
             "stlite_app.py": { url: "./stlite_app.py" },
+            "assets/ceew-logo.png": { url: "./assets/ceew-logo.png" },
             "csvanalyser/__init__.py": { url: "./csvanalyser/__init__.py" },
             "csvanalyser/analysis.py": { url: "./csvanalyser/analysis.py" },
             "csvanalyser/audit.py": { url: "./csvanalyser/audit.py" },
@@ -88,6 +90,8 @@
             "theme.backgroundColor": "#FFFFFF",
             "theme.secondaryBackgroundColor": "#F0F2F6",
             "theme.textColor": "#333232",
+            // Hide developer-only toolbar items such as "Deploy".
+            "client.toolbarMode": "minimal",
           },
         },
         document.getElementById("root")
