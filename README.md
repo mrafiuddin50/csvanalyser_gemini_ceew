@@ -18,7 +18,9 @@ Features:
 - Self-correcting retries when generated code fails
 - Follow-up questions
 - Optional anonymised column names
-- A **🧭 Take the tour** button: a seven-step walkthrough in a dialog, opened only on request
+- A **🧭 Take the tour** button: a guided tour that moves to each part of the page, highlights it and explains
+  it (switching tabs as needed). It is built with [driver.js](https://driverjs.com) (MIT licence) in `tour.js`,
+  and runs only on request
 - A printable user guide at [`guide.html`](https://mrafiuddin50.github.io/csvanalyser_gemini_ceew/guide.html),
   with practice exercises for training sessions
 - Three main tabs: **① Data & quality**, **② Ask questions** (with example questions built from the column
@@ -91,6 +93,7 @@ running pandas. A test page with Pyodide and pandas alone used about 280 MB.
 | --- | --- |
 | `index.html` | Loads stlite, sets the theme and lists every Python file the app uses |
 | `guide.html`, `guide-images/` | The printable user guide and its screenshots |
+| `tour.js`, `tour.css` | The guided tour. Steps find page sections by their `tour-…` container keys in `stlite_app.py`; `tests/test_tour_anchors.py` checks the two match |
 | `.streamlit/config.toml` | The same theme, for running locally with plain Streamlit |
 | `stlite_app.py` | The Streamlit page |
 | `csvanalyser/` | The app's logic: Gemini client, privacy rules and prompts, the sealed-off code runner, file loading, data quality audit, data profile, sample data, exports |

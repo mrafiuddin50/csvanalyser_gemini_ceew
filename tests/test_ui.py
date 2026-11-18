@@ -54,8 +54,9 @@ def test_no_file_shows_info():
     # Welcome screen with the three steps, sample and tour buttons
     assert any(s.value == "Get started in three steps" for s in at.subheader)
     assert at.button(key="sample_welcome").label == "Try the synthetic sample"
-    assert at.button(key="tour_welcome").label == "🧭 Take the tour"
-    assert at.button(key="tour_header").label == "🧭 Take the tour"
+    # Two 'Take the tour' buttons (header and welcome), plain HTML handled by tour.js
+    tour_buttons = [m.value for m in at.markdown if "tda-tour-start" in m.value]
+    assert len(tour_buttons) == 2 and any("tda-primary" in b for b in tour_buttons)
     assert any("[Printable guide](guide.html)" in c.value for c in at.caption)      # footer
     # Status line and an empty activity log are always present
     assert any("**Status:** ready. Upload a file" in c.value for c in at.caption)

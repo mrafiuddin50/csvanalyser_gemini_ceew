@@ -1,10 +1,9 @@
-"""Example questions and the tour content."""
+"""Example questions."""
 import pandas as pd
 
 from benchmark.datasets import make_survey_dataset
 from csvanalyser import audit, sample
 from csvanalyser.suggestions import suggest_questions
-from csvanalyser.tour import TOUR_STEPS
 
 
 def columns(df):
@@ -44,13 +43,3 @@ def test_examples_for_other_shapes():
     assert len(suggest_questions(columns(sample.make_sample_dataset()), limit=2)) == 2
 
 
-def test_tour_steps():
-    assert len(TOUR_STEPS) == 7
-    titles = [t for t, _ in TOUR_STEPS]
-    assert titles[0] == "Welcome" and titles[-1].startswith("6 ·")
-    for title, body in TOUR_STEPS:
-        assert title and len(body) > 80
-    text = " ".join(body for _, body in TOUR_STEPS)
-    for feature in ["synthetic sample", "What you can analyse", "API key", "example questions",
-                    "Run my version", "Explain this code", "Jupyter notebook", "printable guide"]:
-        assert feature in text, feature

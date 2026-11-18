@@ -17,7 +17,6 @@ from csvanalyser.profiling import profile_dataset
 from csvanalyser.prompts import build_explain_prompt, build_prompt
 from csvanalyser.sample import SAMPLE_FILE_NAME, make_sample_dataset
 from csvanalyser.suggestions import suggest_questions
-from csvanalyser.tour import TOUR_STEPS
 
 
 DEFAULT_CONTEXT = (
@@ -246,7 +245,7 @@ def render_status_line(slot):
 
 def render_activity_log():
     log = st.session_state.get("activity") or []
-    with st.sidebar.expander(f"Activity log ({len(log)})"):
+    with st.sidebar.container(key="tour-activity"), st.expander(f"Activity log ({len(log)})"):
         if not log:
             st.caption("Nothing has happened yet.")
         for entry in reversed(log):
@@ -413,10 +412,11 @@ def render_audit(report):
     cols[2].metric("Observations", len(obs))
     st.markdown(report.assessment_text)
 
-    st.subheader("What you can analyse")
-    caps = pd.DataFrame(report.capabilities)
-    caps["Status"] = caps["Status"].map(STATUS_ICONS)
-    st.table(caps[["Analysis", "Status", "Why"]].set_index("Analysis"))   # st.table wraps long text
+    with st.container(key="tour-capabilities"):
+        st.subheader("What you can analyse")
+        caps = pd.DataFrame(report.capabilities)
+        caps["Status"] = caps["Status"].map(STATUS_ICONS)
+        st.table(caps[["Analysis", "Status", "Why"]].set_index("Analysis"))   # st.table wraps long text
 
     st.subheader("Findings")
     _findings_section("Critical issues", crit, "No critical issues identified by the checks performed.")
@@ -489,42 +489,18 @@ def _select_tab(key, label):
 
 # ---------------------------------------------------------------------------
 # Tour
+#
+# The guided tour runs in the browser (tour.js, loaded by index.html). It moves
+# to each part of the page and highlights it. Each part is wrapped in a container
+# with a fixed key ("tour-..."), which Streamlit turns into a CSS class
+# "st-key-tour-..."; tour.js finds sections by those classes. Keep the keys and
+# tour.js in step (tests/test_tour_anchors.py checks this).
 # ---------------------------------------------------------------------------
 
-@st.dialog("Take the tour", width="large")
-def tour_dialog():
-    """Step-by-step tour. Opens only when someone clicks 'Take the tour'."""
-    last = len(TOUR_STEPS) - 1
-    step = min(max(st.session_state.get("tour_step", 0), 0), last)
-    title, body = TOUR_STEPS[step]
-    st.progress((step + 1) / len(TOUR_STEPS), text=f"Step {step + 1} of {len(TOUR_STEPS)}")
-    st.subheader(title)
-    st.markdown(body)
-    if step == 1 and st.session_state.get("df") is None:
-        if st.button("Load the synthetic sample now", key="tour_load_sample"):
-            st.session_state["tour_step"] = step + 1
-            st.session_state["reopen_tour"] = True
-            _queue("load_sample")
-            st.rerun()
-    if step == last:
-        st.link_button("Open the printable guide", GUIDE_URL)
-    back, _, forward = st.columns([1, 2, 1])
-    if back.button("Back", key="tour_back", disabled=step == 0):
-        st.session_state["tour_step"] = step - 1
-        st.rerun(scope="fragment")
-    if step < last:
-        if forward.button("Next", key="tour_next", type="primary"):
-            st.session_state["tour_step"] = step + 1
-            st.rerun(scope="fragment")
-    elif forward.button("Finish", key="tour_finish", type="primary"):
-        st.session_state["tour_step"] = 0
-        st.rerun()
-
-
-def _open_tour_button(column, key: str, primary: bool = False):
-    if column.button("🧭 Take the tour", key=key, type="primary" if primary else "secondary"):
-        st.session_state["tour_step"] = 0
-        tour_dialog()
+def tour_button(container, primary: bool = False):
+    """A plain HTML button: tour.js starts the tour on click, without a Streamlit rerun."""
+    style = "tda-tour-start tda-primary" if primary else "tda-tour-start"
+    container.markdown(f'<button type="button" class="{style}">🧭 Take the tour</button>', unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
@@ -532,20 +508,23 @@ def _open_tour_button(column, key: str, primary: bool = False):
 # ---------------------------------------------------------------------------
 
 def render_header():
-    st.title("Tabular Data Analyser")
-    st.markdown("Ask questions of your data in plain English. **Your data never leaves your computer.**")
-    tour_col, guide_col, help_col, _ = st.columns([1.3, 1.4, 1, 3])
-    _open_tour_button(tour_col, "tour_header", primary=True)
-    guide_col.link_button("📘 Printable guide", GUIDE_URL)
-    with help_col.popover("Help"):
-        st.markdown("#### How your data is handled")
-        st.markdown(DATA_HANDLING_NOTE)
-        st.markdown("#### Memory and performance tips")
-        st.markdown(MEMORY_TIPS)
+    with st.container(key="tour-header"):
+        st.title("Tabular Data Analyser")
+        st.markdown("Ask questions of your data in plain English. **Your data never leaves your computer.**")
+        tour_col, help_area, _ = st.columns([1.3, 2.6, 3])
+        tour_button(tour_col, primary=True)
+        with help_area.container(key="tour-help"):
+            guide_col, help_col = st.columns([1.4, 1])
+            guide_col.link_button("📘 Printable guide", GUIDE_URL)
+            with help_col.popover("Help"):
+                st.markdown("#### How your data is handled")
+                st.markdown(DATA_HANDLING_NOTE)
+                st.markdown("#### Memory and performance tips")
+                st.markdown(MEMORY_TIPS)
 
 
 def render_welcome():
-    with st.container(border=True):
+    with st.container(border=True, key="tour-welcome"):
         st.subheader("Get started in three steps")
         steps = [
             ("1 · Load data", "Upload a CSV or Excel file in the sidebar, or try the synthetic sample."),
@@ -558,56 +537,58 @@ def render_welcome():
             column.caption(text)
         sample_col, tour_col, _ = st.columns([1.6, 1.3, 3])
         sample_col.button("Try the synthetic sample", key="sample_welcome", type="primary", on_click=_load_sample)
-        _open_tour_button(tour_col, "tour_welcome")
+        tour_button(tour_col)
         st.caption("To use your own file, upload it in the sidebar under **2 · Data**.")
 
 
 def render_sidebar(df):
     """Compact sidebar: 1 Connect, 2 Data, 3 Settings. Returns (api key, model, anonymise, context)."""
-    sb = st.sidebar
-    connect_heading = sb.empty()
-    sb.text_input(
-        "Gemini API key", type="password", key="api_key", on_change=_on_key_change,
-        help="Get a free key from Google AI Studio. Press Enter to check it.",
-    )
-    run_pending_task("sidebar")
-    key_status = st.session_state.get("key_status")
-    if key_status:
-        (sb.success if key_status[0] == "ok" else sb.error)(key_status[1])
-    connect_heading.subheader(("✅ " if key_status and key_status[0] == "ok" else "") + "1 · Connect")
-    model_options = st.session_state.get("models") or FALLBACK_MODELS
-    if st.session_state.get("model") not in model_options:
-        st.session_state["model"] = model_options[0]
-    model = sb.selectbox("Model", model_options, key="model")
-    if not st.session_state.get("models"):
-        sb.caption("Default list. Enter a working key to see the models it can use.")
-
-    sb.subheader(("✅ " if df is not None else "") + "2 · Data")
-    sb.file_uploader("Upload a CSV or Excel file", type=UPLOAD_TYPES, key="uploaded_csv", on_change=_on_upload)
-    sb.button(
-        "Try the synthetic sample", key="sample_sidebar", on_click=_load_sample,
-        help="Made-up daily air-quality readings for five fictional stations in 2024, "
-             "with some missing values, messy names and duplicates to practise on.",
-    )
-    if df is not None:
-        if st.session_state.get("is_sample"):
-            sb.caption("Using the synthetic sample dataset.")
-            sb.download_button("Download the sample as CSV", data=df.to_csv(index=False).encode("utf-8"),
-                               file_name=SAMPLE_FILE_NAME, mime="text/csv")
-        else:
-            description = st.session_state.get("file_description")
-            sb.caption(f"Using **{st.session_state.get('file_name') or 'your file'}**"
-                       + (f", read as {description}." if description else "."))
-
-    with sb.expander("3 · Settings"):
-        anonymise = st.checkbox(
-            "Anonymise column names", key="anonymise", on_change=_clear_history,
-            help="Sends col_1, col_2, ... instead of the real column names. Use this when the column names "
-                 "themselves are sensitive (for example, site names or respondent IDs as headers). "
-                 "Answers may be less accurate because the model cannot tell what each column means.",
+    with st.sidebar.container(key="tour-connect"):
+        connect_heading = st.empty()
+        st.text_input(
+            "Gemini API key", type="password", key="api_key", on_change=_on_key_change,
+            help="Get a free key from Google AI Studio. Press Enter to check it.",
         )
-        context = st.text_area("Instructions sent with every question", value=DEFAULT_CONTEXT, height=130)
-        st.button("Clear question history", key="clear_sidebar", on_click=_clear_history)
+        run_pending_task("sidebar")
+        key_status = st.session_state.get("key_status")
+        if key_status:
+            (st.success if key_status[0] == "ok" else st.error)(key_status[1])
+        connect_heading.subheader(("✅ " if key_status and key_status[0] == "ok" else "") + "1 · Connect")
+        model_options = st.session_state.get("models") or FALLBACK_MODELS
+        if st.session_state.get("model") not in model_options:
+            st.session_state["model"] = model_options[0]
+        model = st.selectbox("Model", model_options, key="model")
+        if not st.session_state.get("models"):
+            st.caption("Default list. Enter a working key to see the models it can use.")
+
+    with st.sidebar.container(key="tour-data"):
+        st.subheader(("✅ " if df is not None else "") + "2 · Data")
+        st.file_uploader("Upload a CSV or Excel file", type=UPLOAD_TYPES, key="uploaded_csv", on_change=_on_upload)
+        st.button(
+            "Try the synthetic sample", key="sample_sidebar", on_click=_load_sample,
+            help="Made-up daily air-quality readings for five fictional stations in 2024, "
+                 "with some missing values, messy names and duplicates to practise on.",
+        )
+        if df is not None:
+            if st.session_state.get("is_sample"):
+                st.caption("Using the synthetic sample dataset.")
+                st.download_button("Download the sample as CSV", data=df.to_csv(index=False).encode("utf-8"),
+                                   file_name=SAMPLE_FILE_NAME, mime="text/csv")
+            else:
+                description = st.session_state.get("file_description")
+                st.caption(f"Using **{st.session_state.get('file_name') or 'your file'}**"
+                           + (f", read as {description}." if description else "."))
+
+    with st.sidebar.container(key="tour-settings"):
+        with st.expander("3 · Settings"):
+            anonymise = st.checkbox(
+                "Anonymise column names", key="anonymise", on_change=_clear_history,
+                help="Sends col_1, col_2, ... instead of the real column names. Use this when the column names "
+                     "themselves are sensitive (for example, site names or respondent IDs as headers). "
+                     "Answers may be less accurate because the model cannot tell what each column means.",
+            )
+            context = st.text_area("Instructions sent with every question", value=DEFAULT_CONTEXT, height=130)
+            st.button("Clear question history", key="clear_sidebar", on_click=_clear_history)
     user_api_key = (st.session_state.get("api_key") or "").strip()
     return user_api_key, model, anonymise, context
 
@@ -642,21 +623,25 @@ def render_ask(df, api_key, model, anonymise, context):
     report = st.session_state.get("audit")
     examples = suggest_questions(report.column_info) if report else []
     if examples:
-        st.markdown("**Example questions** (click one to use it, then press Analyse):")
-        columns = st.columns(2)
-        for index, question in enumerate(examples):
-            columns[index % 2].button(question, key=f"example_{index}", on_click=_use_example, args=(question,),
-                                      help=question)
+        with st.container(key="tour-examples"):
+            st.markdown("**Example questions** (click one to use it, then press Analyse):")
+            columns = st.columns(2)
+            for index, question in enumerate(examples):
+                columns[index % 2].button(question, key=f"example_{index}", on_click=_use_example,
+                                          args=(question,), help=question)
 
-    query = st.text_input("Your question", key="query", placeholder="For example: average of a column by group")
-    if query:
-        preview = prepare_request(df, query, context, anonymise)
-        past = past_turns_for_prompt(st.session_state["history"], anonymise)
-        with st.expander("What will be sent to Gemini"):
-            st.caption("Only this text leaves your browser. No rows or values from your file are included.")
-            st.code(build_prompt(preview["schema"], preview["question"], preview["context"], past), language="text")
+    with st.container(key="tour-question"):
+        query = st.text_input("Your question", key="query", placeholder="For example: average of a column by group")
+        if query:
+            preview = prepare_request(df, query, context, anonymise)
+            past = past_turns_for_prompt(st.session_state["history"], anonymise)
+            with st.expander("What will be sent to Gemini"):
+                st.caption("Only this text leaves your browser. No rows or values from your file are included.")
+                st.code(build_prompt(preview["schema"], preview["question"], preview["context"], past),
+                        language="text")
+        analyse_clicked = st.button("Analyse", type="primary")
 
-    if st.button("Analyse", type="primary") and query:
+    if analyse_clicked and query:
         if not api_key:
             st.error("Please enter a Gemini API key in the sidebar (1 · Connect) to run analysis.")
             _log("Analysis not started: no API key entered", ok=False)
@@ -681,39 +666,41 @@ def render_ask(df, api_key, model, anonymise, context):
 
     run_pending_task("answers")
     if st.session_state["history"]:
-        st.markdown(f"**Answers** (newest first, {len(st.session_state['history'])})")
-    for turn in reversed(st.session_state["history"]):
-        render_turn(turn, df)
+        with st.container(key="tour-answers"):
+            st.markdown(f"**Answers** (newest first, {len(st.session_state['history'])})")
+            for turn in reversed(st.session_state["history"]):
+                render_turn(turn, df)
 
 
 def render_export(df: pd.DataFrame):
-    st.subheader("Export your session")
-    turns_to_export = exportable_turns(st.session_state["history"])
-    if not turns_to_export:
-        st.info("Answer at least one question in **② Ask questions** to export your session.")
-    else:
-        st.caption(f"{len(turns_to_export)} answered question(s) as code. Results are not included, so the "
-                   "file can be shared without your data. Run it next to your data file to reproduce the results.")
-        reader_code = st.session_state.get("reader_code") or "pd.read_csv('your_file.csv')"
-        script_col, notebook_col, _ = st.columns([1, 1.2, 2])
-        script_col.download_button(
-            "Python script (.py)", data=build_script(st.session_state["history"], reader_code, df.columns),
-            file_name="analysis_session.py", mime="text/x-python",
-        )
-        notebook_col.download_button(
-            "Jupyter notebook (.ipynb)",
-            data=build_notebook(st.session_state["history"], reader_code, df.columns),
-            file_name="analysis_session.ipynb", mime="application/x-ipynb+json",
-        )
-    st.subheader("Data quality report")
-    html = st.session_state.get("audit_html")
-    if html:
-        stem = (st.session_state.get("file_name") or "data").rsplit(".", 1)[0].replace(" ", "_")
-        st.download_button("Download the audit report (HTML)", data=html.encode("utf-8"),
-                           file_name=f"data_quality_report_{stem}.html", mime="text/html", key="audit_export")
-        st.caption("Open it in any browser; use Print → Save as PDF for a PDF.")
-    else:
-        st.caption("No audit report is available for this file.")
+    with st.container(key="tour-export"):
+        st.subheader("Export your session")
+        turns_to_export = exportable_turns(st.session_state["history"])
+        if not turns_to_export:
+            st.info("Answer at least one question in **② Ask questions** to export your session.")
+        else:
+            st.caption(f"{len(turns_to_export)} answered question(s) as code. Results are not included, so the file "
+                       "can be shared without your data. Run it next to your data file to reproduce the results.")
+            reader_code = st.session_state.get("reader_code") or "pd.read_csv('your_file.csv')"
+            script_col, notebook_col, _ = st.columns([1, 1.2, 2])
+            script_col.download_button(
+                "Python script (.py)", data=build_script(st.session_state["history"], reader_code, df.columns),
+                file_name="analysis_session.py", mime="text/x-python",
+            )
+            notebook_col.download_button(
+                "Jupyter notebook (.ipynb)",
+                data=build_notebook(st.session_state["history"], reader_code, df.columns),
+                file_name="analysis_session.ipynb", mime="application/x-ipynb+json",
+            )
+        st.subheader("Data quality report")
+        html = st.session_state.get("audit_html")
+        if html:
+            stem = (st.session_state.get("file_name") or "data").rsplit(".", 1)[0].replace(" ", "_")
+            st.download_button("Download the audit report (HTML)", data=html.encode("utf-8"),
+                               file_name=f"data_quality_report_{stem}.html", mime="text/html", key="audit_export")
+            st.caption("Open it in any browser; use Print → Save as PDF for a PDF.")
+        else:
+            st.caption("No audit report is available for this file.")
 
 
 def render_footer():
@@ -733,7 +720,8 @@ def main():
 
     render_header()
     # Filled in at the end of each run, so it always shows the latest action.
-    status_slot = st.empty()
+    with st.container(key="tour-status"):
+        status_slot = st.empty()
     run_pending_task("main")
 
     df = st.session_state.get("df")
@@ -751,15 +739,17 @@ def main():
         st.warning("You are using **synthetic sample data**. It is made up for practice and is not real measurements.")
     report = _get_audit(df)
     if report is not None:
-        render_audit_banner(report)
+        with st.container(key="tour-banner"):
+            render_audit_banner(report)
 
-    data_tab, ask_tab, export_tab = _tabs(MAIN_TABS, "main_tabs")
-    with data_tab:
-        render_data_section(df)
-    with ask_tab:
-        render_ask(df, api_key, model, anonymise, context)
-    with export_tab:
-        render_export(df)
+    with st.container(key="tour-tabs"):
+        data_tab, ask_tab, export_tab = _tabs(MAIN_TABS, "main_tabs")
+        with data_tab:
+            render_data_section(df)
+        with ask_tab:
+            render_ask(df, api_key, model, anonymise, context)
+        with export_tab:
+            render_export(df)
 
     render_footer()
     _finish(status_slot)
@@ -770,8 +760,6 @@ def _finish(status_slot):
     st.session_state["pending"] = None
     render_status_line(status_slot)
     render_activity_log()
-    if st.session_state.pop("reopen_tour", False):
-        tour_dialog()
 
 
 if __name__ == "__main__":
