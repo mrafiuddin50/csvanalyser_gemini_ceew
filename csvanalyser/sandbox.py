@@ -40,6 +40,17 @@ class NoResultError(Exception):
     pass
 
 
+# pandas 3 and later use copy-on-write: a light copy shares memory with the original but any change
+# made through it copies the affected part first, so the original is never altered. Older pandas
+# needs a full copy (twice the memory for a moment, about 0.5 s for 200,000 rows).
+COPY_ON_WRITE = int(pd.__version__.split(".")[0]) >= 3
+
+
+def private_copy(df: pd.DataFrame) -> pd.DataFrame:
+    """A copy of the data that generated code can change without touching the original."""
+    return df.copy(deep=not COPY_ON_WRITE)
+
+
 def _figure_to_png(fig) -> bytes:
     import matplotlib.pyplot as plt
     buffer = io.BytesIO()
@@ -152,7 +163,7 @@ def run_generated_code(code: str, df: pd.DataFrame, reverse_aliases: dict):
     namespace = {
         "__builtins__": safe_builtins,
         "__name__": "__generated__",
-        "df": df.copy(),
+        "df": private_copy(df),
         "pd": pd,
         "np": np,
         "plt": plt,

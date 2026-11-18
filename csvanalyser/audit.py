@@ -16,6 +16,14 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+try:
+    from pandas.tseries.api import guess_datetime_format
+except ImportError:   # older pandas
+    try:
+        from pandas._libs.tslibs.parsing import guess_datetime_format
+    except ImportError:
+        guess_datetime_format = None
+
 CRITICAL, WARNING, OBSERVATION = "Critical", "Warning", "Observation"
 READY, CAUTION, NOT_READY = "READY", "READY WITH CAUTION", "NOT READY"
 CAN, CAREFUL, CANNOT = "Ready", "Use with caution", "Not possible"
@@ -105,6 +113,7 @@ class AuditReport:
     generated_at: str
     identifiers: list
     temporal: list
+    duplicate_rows: int | None = None     # exact copies of another row (None if not checked)
 
     def by_severity(self, severity):
         return [f for f in self.findings if f.severity == severity]
@@ -128,25 +137,70 @@ def _is_text(series: pd.Series) -> bool:
             or isinstance(series.dtype, pd.CategoricalDtype))
 
 
+def _parse_each(uniques: pd.Series, dayfirst: bool) -> pd.Series:
+    """Parses values one by one, whatever format each is in. Correct but slow for many values."""
+    try:
+        return pd.to_datetime(uniques, errors="coerce", format="mixed", dayfirst=dayfirst)
+    except (TypeError, ValueError):
+        return pd.to_datetime(uniques, errors="coerce", dayfirst=dayfirst)
+
+
+def _common_format(uniques: pd.Series, dayfirst: bool):
+    """The date format most of the first values are written in (e.g. '%d/%m/%Y'), or None."""
+    if guess_datetime_format is None:
+        return None
+    counts = {}
+    for value in uniques.head(50):
+        try:
+            fmt = guess_datetime_format(str(value), dayfirst=dayfirst)
+        except (TypeError, ValueError):
+            fmt = None
+        if fmt:
+            counts[fmt] = counts.get(fmt, 0) + 1
+    return max(counts, key=counts.get) if counts else None
+
+
 def _parse_dates(values: pd.Series, dayfirst: bool) -> pd.Series:
-    """Parses each distinct text value once, then maps back."""
+    """Parses each distinct text value once, then maps back.
+
+    Values written in the column's usual format are parsed in one go; only the rest go
+    through the slow one-by-one parser. Same result as parsing every value one by one,
+    but much faster for large files (most of the audit's time used to be spent here).
+    """
     uniques = pd.Series(values.dropna().unique())
     if uniques.empty:
         return pd.Series(pd.NaT, index=values.index)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        try:
-            parsed = pd.to_datetime(uniques, errors="coerce", format="mixed", dayfirst=dayfirst)
-        except (TypeError, ValueError):
-            parsed = pd.to_datetime(uniques, errors="coerce", dayfirst=dayfirst)
+        parsed = None
+        fmt = _common_format(uniques, dayfirst)
+        if fmt:
+            try:
+                parsed = pd.to_datetime(uniques, errors="coerce", format=fmt)
+                rest = parsed.isna()
+                if rest.any():
+                    parsed[rest] = _parse_each(uniques[rest], dayfirst)
+            except Exception:   # e.g. time zones mixed with plain times: use the slow path
+                parsed = None
+        if parsed is None:
+            parsed = _parse_each(uniques, dayfirst)
     return values.map(dict(zip(uniques, parsed)))
+
+
+def _date_rate_estimate(clean: pd.Series, dayfirst: bool) -> float:
+    """Share of values that read as dates, from up to 500 values (all of them for small columns)."""
+    sample = clean.sample(500, random_state=0) if len(clean) > 500 else clean
+    return float(_parse_dates(sample, dayfirst).notna().mean())
 
 
 def _day_month_order(values: pd.Series):
     """Returns 'dayfirst', 'monthfirst', 'ambiguous', 'mixed' or None for d/m/y-style dates."""
-    matches = values.dropna().str.extract(DMY_PATTERN).dropna()
-    if len(matches) < max(3, 0.5 * values.notna().sum()):
+    counts = values.dropna().value_counts()           # look at each distinct value once
+    matches = counts.index.to_series().str.extract(DMY_PATTERN)
+    matched = matches.notna().all(axis=1).to_numpy()
+    if counts[matched].sum() < max(3, 0.5 * values.notna().sum()):
         return None
+    matches = matches[matched]
     first, second = matches[0].astype(int), matches[1].astype(int)
     day_first, month_first = (first > 12).any(), (second > 12).any()
     if day_first and month_first:
@@ -229,8 +283,11 @@ def _profile_column(name, series: pd.Series, n: int) -> ColumnInfo:
         return info
 
     has_digit = uniques.str.contains(r"\d", regex=True)
-    if has_digit.mean() >= 0.9:
-        order = _day_month_order(clean)
+    order = _day_month_order(clean) if has_digit.mean() >= 0.9 else None
+    # Skip columns that are clearly not dates (such as codes with digits) without parsing every value:
+    # reading them as dates needs at least half the values to be dates, and a 500-value sample
+    # showing under 30% rules that out.
+    if has_digit.mean() >= 0.9 and _date_rate_estimate(clean, order == "dayfirst") >= 0.3:
         dates = _parse_dates(series.astype("object").where(series.notna()).astype(str).str.strip()
                              .where(~(series.isna())), dayfirst=(order == "dayfirst"))
         date_rate = dates[clean.index].notna().mean()
@@ -291,6 +348,7 @@ class _Audit:
         self.entity = None
         self.date_col = None
         self.key_unique = False
+        self.duplicate_rows = None
 
     def add(self, *args, **kwargs):
         finding = Finding(*args, **kwargs)
@@ -374,7 +432,7 @@ class _Audit:
     # -- duplicates and keys -----------------------------------------------
     def duplicates(self):
         self.done.append("Exact duplicate rows and identifier uniqueness")
-        dup_rows = int(self.df.duplicated().sum())
+        dup_rows = self.duplicate_rows = int(self.df.duplicated().sum())
         if dup_rows:
             pct = 100 * dup_rows / self.n
             self.add(CRITICAL if pct > 10 else WARNING, f"{dup_rows:,} rows are exact copies of another row",
@@ -655,19 +713,31 @@ class _Audit:
         quant = sorted(quant, key=lambda i: i.numeric.isna().mean())[:15]
         self.done.append(f"Correlation (Pearson and Spearman) between {len(quant)} numeric columns, "
                          "pairs with at least 30 complete rows")
+        # All pairs at once: each pair uses the rows where both columns have a value.
+        values = pd.concat([i.numeric.reset_index(drop=True) for i in quant], axis=1, ignore_index=True)
+        present = values.notna().to_numpy(dtype=float)
+        pair_rows = present.T @ present
+        pearson_all = values.corr().to_numpy()
+        # Spearman = Pearson on ranks; pandas' method="spearman" needs scipy, which the browser lacks.
+        # Columns without gaps share one ranking; pairs involving a gappy column are ranked on their own rows.
+        no_gaps = present.all(axis=0)
+        spearman_all = values.loc[:, no_gaps].rank().corr() if no_gaps.sum() >= 2 else None
         rows = []
         for a_i, a in enumerate(quant):
-            for b in quant[a_i + 1:]:
-                pair = pd.concat([a.numeric, b.numeric], axis=1).dropna()
-                if len(pair) < 30:
+            for b_i in range(a_i + 1, len(quant)):
+                b = quant[b_i]
+                n_pair = int(pair_rows[a_i, b_i])
+                if n_pair < 30:
                     continue
-                pearson = pair.iloc[:, 0].corr(pair.iloc[:, 1])
-                # Spearman = Pearson on ranks; pandas' method="spearman" needs scipy, which the browser lacks.
-                ranks = pair.rank()
-                spearman = ranks.iloc[:, 0].corr(ranks.iloc[:, 1])
+                pearson = pearson_all[a_i, b_i]
+                if no_gaps[a_i] and no_gaps[b_i]:
+                    spearman = spearman_all.loc[a_i, b_i]
+                else:
+                    ranks = values[[a_i, b_i]].dropna().rank()
+                    spearman = ranks[a_i].corr(ranks[b_i])
                 if not np.isnan(pearson):
-                    rows.append({"column A": a.name, "column B": b.name, "rows used": len(pair),
-                                 "Pearson r": round(pearson, 3), "Spearman rho": round(spearman, 3)})
+                    rows.append({"column A": a.name, "column B": b.name, "rows used": n_pair,
+                                 "Pearson r": round(float(pearson), 3), "Spearman rho": round(float(spearman), 3)})
         if not rows:
             return
         table = pd.DataFrame(rows)
@@ -945,6 +1015,11 @@ def run_audit(df: pd.DataFrame, file_name: str = "data", today: dt.date | None =
 
     identifiers = [i.name for i in audit.info.values() if i.semantic == "identifier"]
     temporal = [i.name for i in audit.info.values() if i.dates is not None]
+    # The report is kept for the whole session, so drop the full-length working columns
+    # (as numbers, as dates, as cleaned labels). On large files they take more memory
+    # than the data itself, and nothing after the checks needs them.
+    for info in audit.info.values():
+        info.numeric = info.dates = info.labels = None
     generated = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     return AuditReport(
         file_name=file_name, file_type=(file_name.rsplit(".", 1)[-1].upper() if "." in file_name else "unknown"),
@@ -952,7 +1027,7 @@ def run_audit(df: pd.DataFrame, file_name: str = "data", today: dt.date | None =
         assessment=assessment, assessment_text=assessment_text, readiness=readiness,
         readiness_text=readiness_text, actions=actions, capabilities=capabilities, stats=audit.stats,
         correlations=audit.correlations, checks_done=audit.done, checks_skipped=audit.skipped,
-        generated_at=generated, identifiers=identifiers, temporal=temporal,
+        generated_at=generated, identifiers=identifiers, temporal=temporal, duplicate_rows=audit.duplicate_rows,
     )
 
 

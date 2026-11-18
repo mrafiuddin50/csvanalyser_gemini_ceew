@@ -18,18 +18,29 @@ def _looks_like_dates(series: pd.Series) -> bool:
     return parsed.notna().mean() >= 0.8
 
 
-def profile_dataset(df: pd.DataFrame):
-    """Returns (summary dict, per-column table) describing data quality."""
+def profile_dataset(df: pd.DataFrame, report=None):
+    """Returns (summary dict, per-column table) describing data quality.
+
+    report: the data quality audit for the same data, if available. Its missing and
+    distinct counts and duplicate-row count are reused instead of being worked out
+    again (they are the slowest parts on large files).
+    """
+    known = {}
+    if report is not None:
+        known = {info.name: info for info in report.column_info}
+        if len(known) != df.shape[1] or any(str(c) not in known for c in df.columns):
+            known = {}                       # repeated column names: work everything out here
     rows = []
     for col in df.columns:
         series = df[col]
-        missing = int(series.isna().sum())
+        info = known.get(str(col))
+        missing = info.missing if info else int(series.isna().sum())
         row = {
             "column": str(col),
             "type": str(series.dtype),
             "missing": missing,
             "missing %": round(100 * missing / len(series), 1) if len(series) else 0.0,
-            "distinct": int(series.nunique(dropna=True)),
+            "distinct": info.unique if info else int(series.nunique(dropna=True)),
             "min": None, "median": None, "mean": None, "max": None,
             "most common": "",
             "note": "",
@@ -50,10 +61,13 @@ def profile_dataset(df: pd.DataFrame):
             row["note"] = "Entirely empty"
         rows.append(row)
 
+    duplicates = getattr(report, "duplicate_rows", None) if known else None
+    if duplicates is None:
+        duplicates = int(df.duplicated().sum()) if len(df.columns) else 0
     summary = {
         "rows": len(df),
         "columns": df.shape[1],
-        "duplicate rows": int(df.duplicated().sum()) if len(df.columns) else 0,
+        "duplicate rows": duplicates,
         "missing cells": int(df.isna().sum().sum()),
     }
     return summary, pd.DataFrame(rows)

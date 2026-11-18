@@ -34,12 +34,12 @@ def _set_dataset(df, name=None, description=None, reader_code=None, is_sample=Fa
     st.session_state["file_description"] = description
     st.session_state["reader_code"] = reader_code
     st.session_state["is_sample"] = is_sample
-    st.session_state["profile"] = profile_dataset(df) if df is not None else None
     # New data: start on the data-quality view.
     st.session_state["main_tabs"] = "① Data & quality"
     st.session_state["data_tabs"] = "Data quality audit"
     # Data quality audit: runs once per file, locally; never sent to Gemini.
     st.session_state["audit"], st.session_state["audit_html"], st.session_state["audit_error"] = None, None, None
+    report = None
     if df is not None:
         try:
             report = audit.run_audit(df, name or "data")
@@ -47,6 +47,8 @@ def _set_dataset(df, name=None, description=None, reader_code=None, is_sample=Fa
             st.session_state["audit_html"] = audit.build_html_report(report)
         except Exception as exc:  # the audit must never stop people using their data
             st.session_state["audit_error"] = f"{type(exc).__name__}: {exc}"
+    # Column details reuse the audit's counts rather than going through the data again.
+    st.session_state["profile"] = profile_dataset(df, report) if df is not None else None
 
 
 # ---------------------------------------------------------------------------
@@ -120,11 +122,19 @@ def _load_sample():
     _queue("load_sample")
 
 
+KEEP_RESULTS = 10   # answers that keep their result tables and charts; older ones keep question and code only
+
+
 def _add_turn(turn: dict):
     st.session_state.setdefault("next_turn_id", 1)
     turn["id"] = st.session_state["next_turn_id"]
     st.session_state["next_turn_id"] += 1
-    st.session_state["history"].append(turn)
+    history = st.session_state["history"]
+    history.append(turn)
+    # Results stay in memory for the whole session; keep only the latest ones.
+    for old in history[:-KEEP_RESULTS]:
+        if old.get("result") is not None or old.get("outputs"):
+            old["result"], old["outputs"], old["csv"], old["result_dropped"] = None, [], None, True
 
 
 def _find_turn(turn_id):
@@ -261,6 +271,19 @@ def _clear_history():
     st.session_state["history"] = []
 
 
+def _result_csv(turn: dict) -> bytes:
+    """The answer's result as CSV, written once and kept with the answer.
+
+    Writing a large table as CSV on every page redraw was slow (seconds for 200,000 rows).
+    Streamlit can write a download only when it is clicked (data=a function), but in the
+    browser version (stlite 1.12) that gives a link to an address that does not exist, so
+    the file is written in advance. It is dropped together with the result (KEEP_RESULTS).
+    """
+    if turn.get("csv") is None:
+        turn["csv"] = turn["result"].to_csv().encode("utf-8")
+    return turn["csv"]
+
+
 def _show_value(value):
     if isinstance(value, (pd.DataFrame, pd.Series)):
         st.dataframe(value)
@@ -278,6 +301,9 @@ def render_turn(turn: dict, df: pd.DataFrame):
         result_tab, code_tab, sent_tab = _tabs(["Result", "Code", f"Sent to Gemini ({sent})"], f"card_tabs_{turn_id}")
 
         with result_tab:
+            if turn.get("result_dropped"):
+                st.info(f"To save memory, only the latest {KEEP_RESULTS} answers keep their results. The question "
+                        "and code are kept: open **Code** and press **Run my version** to see this result again.")
             for name, args, kwargs in turn["outputs"]:
                 try:
                     if name == "image":
@@ -292,7 +318,7 @@ def render_turn(turn: dict, df: pd.DataFrame):
                 _show_value(turn["result"])
                 if isinstance(turn["result"], (pd.DataFrame, pd.Series)):
                     st.download_button(
-                        "Download result as CSV", data=turn["result"].to_csv().encode("utf-8"),
+                        "Download result as CSV", data=_result_csv(turn),
                         file_name=f"result_{turn_id}.csv", mime="text/csv", key=f"download_{turn_id}",
                     )
                 if turn["attempts"] > 1:
