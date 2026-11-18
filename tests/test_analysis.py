@@ -125,3 +125,40 @@ def test_input_df_not_mutated():
     llm, _ = fake_llm(["df['pm25'] = 0\nresult = 1"])
     analysis.analyse("q", df, "", [], False, llm)
     assert df["pm25"].iloc[0] == 123.45
+
+
+# Progress messages shown in the page's status box
+
+def test_progress_messages_for_retry_then_success():
+    steps = []
+    llm, _ = fake_llm(["x = float(df['site_name'].iloc[0])", "result = 1"])
+    turn = analysis.analyse("q", make_df(), "", [], False, llm, progress=steps.append)
+    assert turn["error"] is None
+    assert steps == [
+        "Asking Gemini to write the code (attempt 1 of 3)…",
+        "Running the code on your computer…",
+        "The code did not work (ValueError). Retrying…",
+        "Asking Gemini to fix the code (attempt 2 of 3)…",
+        "Running the code on your computer…",
+        "Done.",
+    ]
+    assert_no_leak(steps)
+
+
+def test_progress_messages_when_all_attempts_fail_or_api_fails():
+    steps = []
+    llm, _ = fake_llm(["result = df['nope']"])
+    analysis.analyse("q", make_df(), "", [], False, llm, progress=steps.append)
+    assert steps[-1] == "The code did not work (KeyError). No attempts left."
+
+    steps = []
+
+    def broken(prompt):
+        raise RuntimeError("HTTP 500")
+    analysis.analyse("q", make_df(), "", [], False, broken, progress=steps.append)
+    assert steps == ["Asking Gemini to write the code (attempt 1 of 3)…", "Gemini request failed."]
+
+
+def test_progress_is_optional():
+    llm, _ = fake_llm(["result = 1"])
+    assert analysis.analyse("q", make_df(), "", [], False, llm)["result"] == 1

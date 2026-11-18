@@ -7,9 +7,46 @@
     <title>Tabular Data Analyser</title>
     <!-- Stlite CSS (version pinned; update deliberately and re-test) -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@stlite/browser@1.12.0/build/stlite.css" />
+    <style>
+      /* Startup note: shown until the app has drawn its title, then removed. */
+      #startup-note {
+        position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 1000;
+        max-width: min(560px, calc(100vw - 32px)); box-sizing: border-box;
+        padding: 12px 16px; border-radius: 8px; border: 1px solid #d0d7de;
+        background: #f6f8fa; color: #1f2328; font: 14px/1.45 Arial, Helvetica, sans-serif;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); pointer-events: none;
+      }
+      #startup-note strong { display: block; margin-bottom: 2px; }
+      @media (prefers-color-scheme: dark) {
+        #startup-note { background: #161b22; color: #e6edf3; border-color: #30363d; }
+      }
+    </style>
   </head>
   <body>
+    <div id="startup-note" role="status" aria-live="polite">
+      <strong>Starting the Tabular Data Analyser…</strong>
+      <span id="startup-detail">Python is being set up inside your browser so your data never leaves your computer.
+        The first visit can take up to a minute; later visits are usually quicker.</span>
+    </div>
     <div id="root" style="height: 100vh;"></div>
+    <script>
+      // Remove the startup note once the app's title appears; if loading takes very long, say so.
+      (function () {
+        var note = document.getElementById("startup-note");
+        var ready = function () { return document.querySelector("#root h1"); };
+        var observer = new MutationObserver(function () {
+          if (ready()) { note.remove(); observer.disconnect(); clearTimeout(slow); }
+        });
+        observer.observe(document.getElementById("root"), { childList: true, subtree: true });
+        var slow = setTimeout(function () {
+          if (document.body.contains(note)) {
+            document.getElementById("startup-detail").textContent =
+              "Still starting… this is taking longer than usual. If nothing appears soon, check your internet " +
+              "connection and reload the page.";
+          }
+        }, 120000);
+      })();
+    </script>
     <!-- Stlite JS -->
     <script type="module">
       import { mount } from "https://cdn.jsdelivr.net/npm/@stlite/browser@1.12.0/build/stlite.js";

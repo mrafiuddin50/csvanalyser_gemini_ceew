@@ -2,6 +2,8 @@
 
 The logic lives in the csvanalyser package; this file only draws the page.
 """
+import time
+
 import pandas as pd
 import streamlit as st
 
@@ -42,12 +44,39 @@ def _set_dataset(df, name=None, description=None, reader_code=None, is_sample=Fa
             st.session_state["audit_error"] = f"{type(exc).__name__}: {exc}"
 
 
-def _on_upload():
+# ---------------------------------------------------------------------------
+# Background tasks with visible progress
+#
+# Widget callbacks run before the page is redrawn, so nothing they do can be shown
+# while it happens. Instead, callbacks only queue a task; the page then runs it
+# inside a status box that shows each step, and records the outcome in the
+# activity log behind the status line.
+# ---------------------------------------------------------------------------
+
+def _queue(task: str, **details):
+    st.session_state["pending"] = {"task": task, **details}
+
+
+def _log(message: str, ok: bool = True, seconds: float | None = None):
+    log = st.session_state.setdefault("activity", [])
+    log.append({"ok": ok, "message": message, "seconds": seconds})
+    del log[:-20]
+
+
+def _audit_summary():
+    report = st.session_state.get("audit")
+    if report is None:
+        return "data quality audit could not be completed"
+    return f"data quality: {report.assessment}, readiness: {report.readiness}"
+
+
+def _task_load_file(step):
     uploaded = st.session_state.get("uploaded_csv")
     st.session_state["load_error"] = None
     if uploaded is None:
         _set_dataset(None)
-        return
+        return True, "File removed"
+    step(f"Reading {uploaded.name} ({uploaded.size / 1024:,.0f} KB)…")
     try:
         df, description, reader_code = load_table(uploaded.name, uploaded.getvalue())
     except Exception as exc:
@@ -56,18 +85,34 @@ def _on_upload():
             f"Could not read {uploaded.name}: {exc}. "
             "Check that it is a CSV, TSV or Excel (.xlsx) file with a header row."
         )
-        return
+        return False, f"Could not read {uploaded.name}"
     if df.empty and len(df.columns) == 0:
         _set_dataset(None)
         st.session_state["load_error"] = f"{uploaded.name} has no columns."
-        return
+        return False, f"{uploaded.name} has no columns"
+    step(f"Read {len(df):,} rows and {df.shape[1]} columns ({description}).")
+    step("Checking data quality…")
     _set_dataset(df, uploaded.name, description, reader_code)
+    return True, f"Loaded {uploaded.name}: {len(df):,} rows; {_audit_summary()}"
+
+
+def _task_load_sample(step):
+    st.session_state["load_error"] = None
+    step("Creating the synthetic sample dataset…")
+    df = make_sample_dataset()
+    step(f"Created {len(df):,} rows and {df.shape[1]} columns.")
+    step("Checking data quality…")
+    _set_dataset(df, SAMPLE_FILE_NAME, "synthetic sample data (not real measurements)",
+                 f"pd.read_csv({SAMPLE_FILE_NAME!r})", is_sample=True)
+    return True, f"Loaded the synthetic sample: {len(df):,} rows; {_audit_summary()}"
+
+
+def _on_upload():
+    _queue("load_file")
 
 
 def _load_sample():
-    st.session_state["load_error"] = None
-    _set_dataset(make_sample_dataset(), SAMPLE_FILE_NAME, "synthetic sample data (not real measurements)",
-                 f"pd.read_csv({SAMPLE_FILE_NAME!r})", is_sample=True)
+    _queue("load_sample")
 
 
 def _add_turn(turn: dict):
@@ -81,53 +126,130 @@ def _find_turn(turn_id):
     return next((t for t in st.session_state.get("history", []) if t.get("id") == turn_id), None)
 
 
-def _on_run_edited(turn_id):
+def _task_run_edited(step, turn_id):
     turn = _find_turn(turn_id)
     df = st.session_state.get("df")
     if turn is None or df is None:
-        return
+        return False, "That answer is no longer available"
     code = st.session_state.get(f"code_{turn_id}", turn["code"])
-    _add_turn(run_edited_code(turn, code, df))
+    step("Running your version of the code on your computer (nothing is sent to Gemini)…")
+    new_turn = run_edited_code(turn, code, df)
+    _add_turn(new_turn)
+    if new_turn["error"]:
+        return False, f"Your edited code failed: {new_turn['error'].split(':')[0]}"
+    return True, "Ran your edited code"
 
 
-def _on_explain(turn_id):
+def _task_explain(step, turn_id):
     turn = _find_turn(turn_id)
     df = st.session_state.get("df")
     if turn is None or df is None:
-        return
+        return False, "That answer is no longer available"
     turn["explanation"], turn["explanation_error"] = None, None
     api_key = (st.session_state.get("api_key") or "").strip()
     if not api_key:
         turn["explanation_error"] = "Enter a Gemini API key in the sidebar to get an explanation."
-        return
+        return False, "No API key entered"
     request = prepare_request(df, "", "", turn.get("anonymise", False))
     code = st.session_state.get(f"code_{turn_id}", turn["code"])
     prompt = build_explain_prompt(request["schema"], code)
     turn["sent_prompts"].append(prompt)
     model = st.session_state.get("model") or FALLBACK_MODELS[0]
+    step(f"Sending the code (and column names only) to {model}…")
     try:
         turn["explanation"] = restore_names(call_gemini_text(prompt, model, api_key), request["reverse"])
     except GeminiError as exc:
         turn["explanation_error"] = str(exc)
+        return False, "Explanation failed"
+    return True, "Explained the code"
 
 
-def _on_key_change():
+def _task_check_key(step):
     """Checks a newly entered key by listing the models it can use."""
     st.session_state["models"] = None
     st.session_state["key_status"] = None
     key = (st.session_state.get("api_key") or "").strip()
     if not key:
-        return
+        return True, "API key cleared"
+    step("Asking Google which models this key can use…")
     try:
         models = list_models(key)
     except GeminiError as exc:
         st.session_state["key_status"] = ("error", str(exc))
-        return
+        return False, "API key check failed"
     if not models:
         st.session_state["key_status"] = ("error", "The key works, but no text models are available to it.")
-        return
+        return False, "API key has no text models"
     st.session_state["models"] = models
     st.session_state["key_status"] = ("ok", f"Key works. {len(models)} models available.")
+    return True, f"API key works: {len(models)} models available"
+
+
+def _on_run_edited(turn_id):
+    _queue("run_edited", turn_id=turn_id)
+
+
+def _on_explain(turn_id):
+    _queue("explain", turn_id=turn_id)
+
+
+def _on_key_change():
+    _queue("check_key")
+
+
+# task name: (status box title, function, where the status box appears)
+TASKS = {
+    "load_file": ("Loading your file", _task_load_file, "main"),
+    "load_sample": ("Loading the synthetic sample", _task_load_sample, "main"),
+    "check_key": ("Checking your API key", _task_check_key, "sidebar"),
+    "run_edited": ("Running your edited code", _task_run_edited, "answers"),
+    "explain": ("Asking Gemini to explain the code", _task_explain, "answers"),
+}
+
+
+def run_pending_task(area: str):
+    """Runs a queued task in a live status box, if one is waiting for this part of the page."""
+    pending = st.session_state.get("pending")
+    if not pending or TASKS.get(pending["task"], (None, None, None))[2] != area:
+        return
+    st.session_state["pending"] = None
+    title, task, _ = TASKS[pending["task"]]
+    details = {k: v for k, v in pending.items() if k != "task"}
+    place = st.sidebar if area == "sidebar" else st
+    start = time.perf_counter()
+    with place.status(f"{title}…", expanded=True) as box:
+        try:
+            ok, summary = task(box.write, **details)
+        except Exception as exc:  # report, never crash the page
+            ok, summary = False, f"{title} failed ({type(exc).__name__}: {exc})"
+        seconds = time.perf_counter() - start
+        box.update(label=f"{summary} ({seconds:.1f} s)", state="complete" if ok else "error", expanded=not ok)
+    _log(summary, ok, seconds)
+
+
+def render_status_line(slot):
+    log = st.session_state.get("activity") or []
+    if not log:
+        slot.caption("**Status:** ready. Upload a file or try the synthetic sample to begin.")
+        return
+    last = log[-1]
+    icon = "✅" if last["ok"] else "⚠️"
+    took = f" ({last['seconds']:.1f} s)" if last.get("seconds") is not None else ""
+    slot.caption(f"**Status:** ready · Last action: {icon} {last['message']}{took} · "
+                 "full list under *Activity log* in the sidebar")
+
+
+def render_activity_log():
+    log = st.session_state.get("activity") or []
+    with st.sidebar.expander(f"Activity log ({len(log)})"):
+        if not log:
+            st.caption("Nothing has happened yet.")
+        for entry in reversed(log):
+            icon = "✅" if entry["ok"] else "⚠️"
+            took = f" ({entry['seconds']:.1f} s)" if entry.get("seconds") is not None else ""
+            st.markdown(f"{icon} {entry['message']}{took}")
+        st.caption("While something is running, its progress appears in a box on the page, and the "
+                   "running indicator at the top right of the page is active.")
 
 
 def _clear_history():
@@ -375,6 +497,8 @@ def main():
         st.markdown(DATA_HANDLING_NOTE)
     with st.expander("Memory and performance tips"):
         st.markdown(MEMORY_TIPS)
+    # Filled in at the end of each run, so it always shows the latest action.
+    status_slot = st.empty()
 
     st.session_state.setdefault("history", [])
     st.session_state.setdefault("df", None)
@@ -384,6 +508,7 @@ def main():
         "Enter Gemini API Key:", type="password", key="api_key", on_change=_on_key_change,
         help="Get a free key from Google AI Studio. Press Enter to check it.",
     )
+    run_pending_task("sidebar")
     user_api_key = (st.session_state.get("api_key") or "").strip()
     key_status = st.session_state.get("key_status")
     if key_status:
@@ -407,11 +532,13 @@ def main():
              "with some missing values, messy names and duplicates to practise on.",
     )
 
+    run_pending_task("main")
     if st.session_state.get("load_error"):
         st.error(st.session_state["load_error"])
     df = st.session_state.get("df")
     if df is None:
         st.info("Please upload a CSV or Excel file in the sidebar to begin, or try the synthetic sample.")
+        _finish(status_slot)
         return
 
     if st.session_state.get("is_sample"):
@@ -462,20 +589,41 @@ def main():
     if st.button("Analyse") and query:
         if not user_api_key:
             st.error("Please enter a Gemini API Key in the sidebar to run analysis.")
+            _log("Analysis not started: no API key entered", ok=False)
         else:
-            with st.spinner("Processing..."):
+            start = time.perf_counter()
+            with st.status(f"Analysing your question with {selected_model}…", expanded=True) as box:
                 turn = analyse(
                     query, df, saved_context, st.session_state["history"], anonymise,
                     llm=lambda prompt: generate_python_code(prompt, selected_model, user_api_key),
+                    progress=box.write,
                 )
+                seconds = time.perf_counter() - start
+                retries = f" after {turn['attempts']} attempts" if turn["attempts"] > 1 else ""
+                if turn["error"]:
+                    summary = f"Could not answer the question{retries}"
+                    box.update(label=f"{summary} ({seconds:.1f} s)", state="error", expanded=True)
+                else:
+                    summary = f"Answered the question{retries}"
+                    box.update(label=f"{summary} ({seconds:.1f} s)", state="complete", expanded=False)
             _add_turn(turn)
+            _log(summary, ok=not turn["error"], seconds=seconds)
 
+    run_pending_task("answers")
     for index, turn in enumerate(reversed(st.session_state["history"])):
         if index:
             st.divider()
         render_turn(turn, df)
 
     render_export(export_box, df)
+    _finish(status_slot)
+
+
+def _finish(status_slot):
+    """End of every run: status line, activity log, and drop any task that could not run."""
+    st.session_state["pending"] = None
+    render_status_line(status_slot)
+    render_activity_log()
 
 
 def render_export(box, df: pd.DataFrame):

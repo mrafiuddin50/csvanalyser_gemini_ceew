@@ -39,11 +39,15 @@ def past_turns_for_prompt(history: list, anonymise: bool) -> list:
     return usable[-PAST_TURNS_IN_PROMPT:]
 
 
-def analyse(question: str, df: pd.DataFrame, context: str, history: list, anonymise: bool, llm) -> dict:
+def analyse(question: str, df: pd.DataFrame, context: str, history: list, anonymise: bool, llm,
+            progress=None) -> dict:
     """Asks the model for code, runs it locally and retries with sanitised errors.
 
     llm: callable taking the prompt text and returning Python code.
+    progress: optional callable taking a short message, called at each step so the
+        page can show what is happening.
     """
+    report = progress or (lambda message: None)
     request = prepare_request(df, question, context, anonymise)
     past = past_turns_for_prompt(history, anonymise)
     turn = {
@@ -63,20 +67,27 @@ def analyse(question: str, df: pd.DataFrame, context: str, history: list, anonym
         prompt = build_prompt(request["schema"], request["question"], request["context"], past, failure)
         turn["sent_prompts"].append(prompt)
         turn["attempts"] = attempt
+        report(f"Asking Gemini to write the code (attempt {attempt} of {MAX_ATTEMPTS})…"
+               if attempt == 1 else f"Asking Gemini to fix the code (attempt {attempt} of {MAX_ATTEMPTS})…")
         try:
             code = llm(prompt)
         except Exception as exc:
             turn["error"] = f"Gemini request failed: {exc}"
+            report("Gemini request failed.")
             return turn
         turn["code"] = code
+        report("Running the code on your computer…")
         try:
             result, outputs = run_generated_code(code, request["work_df"], request["reverse"])
         except Exception as exc:
             failure = (code, sanitise_error(exc, code, request["work_df"]))
             # Full error is shown only to the user, never sent to the model.
             turn["error"] = f"{type(exc).__name__}: {restore_names(str(exc), request['reverse'])}"
+            report(f"The code did not work ({type(exc).__name__})."
+                   + (" Retrying…" if attempt < MAX_ATTEMPTS else " No attempts left."))
             continue
         turn["result"], turn["outputs"], turn["error"] = result, outputs, None
+        report("Done.")
         return turn
     return turn
 

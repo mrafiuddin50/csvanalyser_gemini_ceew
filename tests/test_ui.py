@@ -52,6 +52,52 @@ def test_no_file_shows_info():
     at = AppTest.from_file(APP, default_timeout=TIMEOUT).run()
     assert not at.exception
     assert "upload a CSV" in at.info[0].value
+    # Status line and an empty activity log are always present
+    assert any("**Status:** ready. Upload a file" in c.value for c in at.caption)
+    assert any(e.label == "Activity log (0)" for e in at.sidebar.expander)
+
+
+def _status_line(at):
+    return next(c.value for c in at.caption if c.value.startswith("**Status:**"))
+
+
+def test_status_line_and_activity_log_track_each_action():
+    SENT.clear()
+    REPLIES[:] = ["x = float(df['station'].iloc[0])", "result = df['pm25_ugm3'].mean()"]
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT).run()
+    [b for b in at.sidebar.button if b.label.startswith("No file?")][0].click().run()
+    assert not at.exception, at.exception
+    assert "Loaded the synthetic sample: 1,835 rows; data quality: Needs Attention" in _status_line(at)
+
+    with mock.patch("urllib.request.urlopen", fake_urlopen):
+        at.sidebar.text_input[0].input("fake-key").run()
+        assert "API key works: 2 models available" in _status_line(at)
+        at.text_input[0].input("average pm25").run()
+        [b for b in at.button if b.label == "Analyse"][0].click().run()
+        assert not at.exception, at.exception
+    assert "Answered the question after 2 attempts" in _status_line(at)
+
+    log = at.session_state["activity"]
+    assert [e["message"] for e in log] == [
+        "Loaded the synthetic sample: 1,835 rows; data quality: Needs Attention, readiness: READY WITH CAUTION",
+        "API key works: 2 models available",
+        "Answered the question after 2 attempts",
+    ]
+    assert all(e["ok"] and e["seconds"] >= 0 for e in log)
+    assert any(e.label == "Activity log (3)" for e in at.sidebar.expander)
+    assert at.session_state["pending"] is None
+
+
+def test_failures_are_reported_in_the_status_line():
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT).run()
+    [b for b in at.sidebar.button if b.label.startswith("No file?")][0].click().run()
+    at.text_input[0].input("average pm25").run()
+    [b for b in at.button if b.label == "Analyse"][0].click().run()          # no key entered
+    assert "⚠️ Analysis not started: no API key entered" in _status_line(at)
+    with mock.patch("urllib.request.urlopen", side_effect=OSError("offline")):
+        at.sidebar.text_input[0].input("some-key").run()
+    assert "⚠️ API key check failed" in _status_line(at)
+    assert not at.session_state["activity"][-1]["ok"]
 
 
 def test_full_turn_with_retry_and_history():
