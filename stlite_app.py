@@ -535,10 +535,9 @@ def render_welcome():
         for column, (title, text) in zip(st.columns(3), steps):
             column.markdown(f"**{title}**")
             column.caption(text)
-        sample_col, tour_col, _ = st.columns([1.6, 1.3, 3])
-        sample_col.button("Try the synthetic sample", key="sample_welcome", type="primary", on_click=_load_sample)
-        tour_button(tour_col)
-        st.caption("To use your own file, upload it in the sidebar under **2 · Data**.")
+        st.button("Try the synthetic sample", key="sample_welcome", type="primary", on_click=_load_sample)
+        st.caption("To use your own file, upload it in the sidebar under **2 · Data**. New here? Use "
+                   "**🧭 Take the tour** at the top of the page.")
 
 
 def render_sidebar(df):
@@ -673,25 +672,29 @@ def render_ask(df, api_key, model, anonymise, context):
 
 
 def render_export(df: pd.DataFrame):
-    with st.container(key="tour-export"):
-        st.subheader("Export your session")
+    with st.container(key="tour-export-session"):
+        st.subheader("Download your analysis as a notebook or script")
         turns_to_export = exportable_turns(st.session_state["history"])
-        if not turns_to_export:
-            st.info("Answer at least one question in **② Ask questions** to export your session.")
-        else:
+        if turns_to_export:
             st.caption(f"{len(turns_to_export)} answered question(s) as code. Results are not included, so the file "
                        "can be shared without your data. Run it next to your data file to reproduce the results.")
             reader_code = st.session_state.get("reader_code") or "pd.read_csv('your_file.csv')"
-            script_col, notebook_col, _ = st.columns([1, 1.2, 2])
-            script_col.download_button(
-                "Python script (.py)", data=build_script(st.session_state["history"], reader_code, df.columns),
-                file_name="analysis_session.py", mime="text/x-python",
-            )
-            notebook_col.download_button(
-                "Jupyter notebook (.ipynb)",
-                data=build_notebook(st.session_state["history"], reader_code, df.columns),
-                file_name="analysis_session.ipynb", mime="application/x-ipynb+json",
-            )
+            notebook = build_notebook(st.session_state["history"], reader_code, df.columns)
+            script = build_script(st.session_state["history"], reader_code, df.columns)
+        else:
+            st.caption("These buttons become active after your first answer in **② Ask questions**. The files "
+                       "contain your questions and code only, not your data or results.")
+            notebook = script = ""
+        notebook_col, script_col, _ = st.columns([1.3, 1.1, 2])
+        notebook_col.download_button(
+            "Jupyter notebook (.ipynb)", data=notebook.encode("utf-8"), disabled=not turns_to_export,
+            file_name="analysis_session.ipynb", mime="application/x-ipynb+json", key="export_notebook",
+        )
+        script_col.download_button(
+            "Python script (.py)", data=script.encode("utf-8"), disabled=not turns_to_export,
+            file_name="analysis_session.py", mime="text/x-python", key="export_script",
+        )
+    with st.container(key="tour-export-report"):
         st.subheader("Data quality report")
         html = st.session_state.get("audit_html")
         if html:

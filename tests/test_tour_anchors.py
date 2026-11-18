@@ -46,6 +46,16 @@ def test_tour_buttons_and_assets():
     assert './tour.js"' in INDEX and './tour.css"' in INDEX
 
 
+def test_tour_has_a_notebook_download_step():
+    keys = tour_keys()
+    assert "tour-export-session" in keys and "tour-export-report" in keys
+    assert "Jupyter notebook (.ipynb)" in TOUR_JS
+
+
+def test_only_one_tour_button_on_the_page():
+    assert APP.count("tour_button(") == 2      # the function definition and one call (in the header)
+
+
 def test_tour_text_covers_the_main_features():
     text = TOUR_JS
     for feature in ["API key", "synthetic sample", "What you can analyse", "Example questions", "Analyse",

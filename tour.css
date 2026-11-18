@@ -16,7 +16,7 @@
 .driver-popover.tda-tour { z-index: 1000002 !important; }
 
 .driver-popover.tda-tour {
-  font-family: "Source Sans Pro", "Source Sans 3", Arial, Helvetica, sans-serif;
+  font-family: "Source Sans", "Source Sans Pro", "Source Sans 3", Arial, Helvetica, sans-serif;
   color: #333232; background: #FFFFFF; border: 1px solid #CFCFCE; border-radius: 10px;
   max-width: 360px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
 }

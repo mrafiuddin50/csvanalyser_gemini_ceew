@@ -76,10 +76,18 @@
         "<i>Run my version</i> locally, or <i>Explain this code</i>; <b>Sent to Gemini</b> records each request.",
     },
     {
-      key: "tour-export", needsData: true, tab: EXPORT_TAB,
-      title: "Take your work away",
-      text: "Download your session as a Python script or Jupyter notebook (code only, so it can be shared " +
-        "without your data), and the data quality report.",
+      key: "tour-export-session", needsData: true, tab: EXPORT_TAB,
+      title: "Download as a Jupyter notebook",
+      text: "Save your questions and the code that answered them as a <b>Jupyter notebook (.ipynb)</b> or a " +
+        "<b>Python script (.py)</b>. Open the notebook in Jupyter, VS Code or Google Colab and run it next to " +
+        "your data file to reproduce every result. The files hold code only, never your data or results, so " +
+        "they can be shared safely. The buttons become active after your first answer.",
+    },
+    {
+      key: "tour-export-report", needsData: true, tab: EXPORT_TAB,
+      title: "Data quality report",
+      text: "Download the data quality audit as a report to share with colleagues. Open it in any browser; " +
+        "use Print → Save as PDF if you need a PDF.",
     },
     {
       key: "tour-settings", sidebar: true, side: "right",

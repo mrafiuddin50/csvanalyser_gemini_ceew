@@ -54,9 +54,9 @@ def test_no_file_shows_info():
     # Welcome screen with the three steps, sample and tour buttons
     assert any(s.value == "Get started in three steps" for s in at.subheader)
     assert at.button(key="sample_welcome").label == "Try the synthetic sample"
-    # Two 'Take the tour' buttons (header and welcome), plain HTML handled by tour.js
+    # One 'Take the tour' button (in the header), plain HTML handled by tour.js
     tour_buttons = [m.value for m in at.markdown if "tda-tour-start" in m.value]
-    assert len(tour_buttons) == 2 and any("tda-primary" in b for b in tour_buttons)
+    assert len(tour_buttons) == 1 and "tda-primary" in tour_buttons[0]
     assert any("[Printable guide](guide.html)" in c.value for c in at.caption)      # footer
     # Status line and an empty activity log are always present
     assert any("**Status:** ready. Upload a file" in c.value for c in at.caption)
@@ -186,6 +186,9 @@ def test_sample_profile_edit_explain_and_downloads():
     report = at.session_state["audit"]
     assert report.readiness == "READY WITH CAUTION"
     assert at.session_state["audit_html"].startswith("<!DOCTYPE html>")
+    # Before any answer the notebook/script buttons are shown but inactive
+    downloads = {d.proto.label: d.proto.disabled for d in at.get("download_button")}
+    assert downloads["Jupyter notebook (.ipynb)"] is True and downloads["Python script (.py)"] is True
 
     with mock.patch("urllib.request.urlopen", fake_urlopen):
         at.sidebar.text_input[0].input("fake-key").run()
@@ -193,9 +196,10 @@ def test_sample_profile_edit_explain_and_downloads():
         _button(at, "Analyse").click().run()
         assert not at.exception, at.exception
         assert len(SENT) == 1
-        # result CSV + sample CSV + audit report + .py + .ipynb
-        # result CSV, sample CSV, audit report (data tab and export tab), .py, .ipynb
+        # result CSV, sample CSV, audit report (data tab and export tab), .ipynb, .py
         assert len(at.get("download_button")) == 6
+        downloads = {d.proto.label: d.proto.disabled for d in at.get("download_button")}
+        assert downloads["Jupyter notebook (.ipynb)"] is False and downloads["Python script (.py)"] is False
         # The answer is a card with Result | Code | Sent to Gemini tabs
         labels = [t.label for t in at.tabs]
         assert {"Result", "Code", "Sent to Gemini (1)"} <= set(labels)

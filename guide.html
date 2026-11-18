@@ -31,7 +31,6 @@
     .toc ol { margin: 6px 0; padding-left: 22px; }
     figure { margin: 16px 0; }
     figure img { width: 100%; border: 1px solid var(--line); border-radius: 6px; display: block; }
-    figure img.natural { width: auto; max-width: 100%; }   /* smaller screenshots: avoid blurry enlargement */
     figcaption { color: var(--grey); font-size: 0.9em; margin-top: 6px; }
     table { border-collapse: collapse; width: 100%; margin: 10px 0 16px; background: #FFFFFF; }
     th, td { border: 1px solid var(--line); padding: 7px 9px; text-align: left; vertical-align: top; }
@@ -165,7 +164,7 @@
     <li>Ask follow-up questions; the app remembers your last few questions and the code that answered them.</li>
   </ul>
   <figure>
-    <img class="natural" src="guide-images/05-ask-questions.jpg" alt="The Ask questions tab: example question buttons, the question box, the What will be sent to Gemini panel and the Analyse button" />
+    <img src="guide-images/05-ask-questions.jpg" alt="The Ask questions tab: example question buttons, the question box, the What will be sent to Gemini panel and the Analyse button" />
     <figcaption>The <strong>② Ask questions</strong> tab after clicking an example question.</figcaption>
   </figure>
 
@@ -181,14 +180,20 @@
   </table>
 
   <h3><span class="step">6</span>Take your work away</h3>
-  <p>The <strong>③ Export</strong> tab saves the session as a <strong>Python script</strong> or <strong>Jupyter
-    notebook</strong> containing your questions and code. Results are not included, so the files can be shared
-    without sharing your data; run them next to your data file to reproduce the results. The audit report can
-    also be downloaded there.</p>
+  <p>The <strong>③ Export</strong> tab saves the session as a <strong>Jupyter notebook (.ipynb)</strong> or a
+    <strong>Python script (.py)</strong> containing your questions and the code that answered them. Open the
+    notebook in Jupyter, VS Code or Google Colab and run it next to your data file to reproduce every result.
+    Results are not included, so the files can be shared without sharing your data. The buttons become active
+    after your first answer. The data quality report can also be downloaded here.</p>
+  <figure>
+    <img src="guide-images/06-export.jpg" alt="The Export tab with Jupyter notebook and Python script download buttons, and the data quality report download" />
+    <figcaption>The <strong>③ Export</strong> tab. The notebook and script buttons are inactive until you have
+      answered a question.</figcaption>
+  </figure>
   <p>Under the title, the <strong>status line</strong> shows the last action. The <strong>Activity log</strong> at
     the bottom of the sidebar lists recent actions and how long each took.</p>
   <figure>
-    <img class="natural" src="guide-images/02-tour.jpg" alt="The guided tour highlighting the What you can analyse table, with an explanation bubble showing step 6 of 12" />
+    <img src="guide-images/02-tour.jpg" alt="The guided tour highlighting the data quality verdict banner, with an explanation bubble showing step 5 of 13" />
     <figcaption>The guided tour (🧭 Take the tour) moves around the page, highlights each part in turn and explains
       it. It switches tabs for you; use Next and Back, or the arrow keys, and Esc to leave.</figcaption>
   </figure>
