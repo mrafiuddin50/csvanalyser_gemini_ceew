@@ -2,6 +2,8 @@
 
 The logic lives in the csvanalyser package; this file only draws the page.
 """
+import base64
+import html
 import os
 import time
 
@@ -306,7 +308,7 @@ def _render_result(turn: dict):
             if name == "chart":
                 _render_chart(turn, index, args[0])
             elif name == "image":
-                st.image(args[0])
+                show_png(args[0], 640, "Chart drawn by the generated code")
             else:
                 getattr(st, name)(*args, **kwargs)
         except Exception as exc:
@@ -345,6 +347,26 @@ CHART_FIELDS = [
     ("note", "Note", "For example 'Figures may not add to 100% due to rounding'. For survey data, give the sample "
                      "size (n = …)."),
 ]
+
+
+def show_png(png: bytes, width: int, alt: str, key: str | None = None):
+    """Shows a PNG at full resolution, scaled by the browser.
+
+    st.image shrinks any image wider than the requested width on the Python side, with a plain
+    bilinear resize, so a 300 dpi chart reached the page as a soft 680-pixel picture. Sending the
+    original lets the browser scale it smoothly and use every pixel on high-resolution screens.
+    """
+    data = base64.b64encode(png).decode("ascii")
+    st.markdown(f'<img class="tda-chart" src="data:image/png;base64,{data}" alt="{html.escape(alt)}" '
+                f'style="width:{width}px;max-width:100%;height:auto;display:block" />',
+                unsafe_allow_html=True)
+
+
+def _chart_alt(spec, texts: dict) -> str:
+    headline = (texts.get("headline") or "").strip()
+    titles = " and ".join(t for t in (texts.get("y_title") or spec.y_title, texts.get("x_title") or spec.x_title) if t)
+    kind = spec.kind.replace("_", " ")
+    return f"{kind} chart" + (f": {headline}" if headline else "") + (f" ({titles})" if titles else "")
 
 
 def _chart_style() -> Style:
@@ -393,6 +415,9 @@ def _on_make_svg(turn_id, index):
     turn.setdefault("chart_svg", {})[index] = (_chart_key(style, texts), render_chart(spec, style, texts, fmt="svg"))
 
 
+_TOUR_CHART = {"placed": False}    # the tour points at the newest chart on the page; reset in main()
+
+
 def _render_chart(turn: dict, index: int, spec):
     turn_id = turn.get("id", 0)
     if spec.why:
@@ -403,14 +428,18 @@ def _render_chart(turn: dict, index: int, spec):
     if spec.kind == "table":
         st.dataframe(spec.data)
         return
-    st.image(_chart_png(turn, index, spec), width=CHART_DISPLAY_WIDTH.get(_chart_style().use, 680))
-    tips = [text for level, text in spec.notes if level != "fallback"]
-    if tips:
-        st.caption("\n".join(f"- {tip}" for tip in tips))
+    texts = (turn.get("chart_texts") or {}).get(index, {})
+    newest = not _TOUR_CHART["placed"]
+    _TOUR_CHART["placed"] = True
+    with st.container(key="tour-chart") if newest else st.container():
+        show_png(_chart_png(turn, index, spec), CHART_DISPLAY_WIDTH.get(_chart_style().use, 680),
+                 _chart_alt(spec, texts))
+        tips = [text for level, text in spec.notes if level != "fallback"]
+        if tips:
+            st.caption("\n".join(f"- {tip}" for tip in tips))
     for flag in (turn.get("chart_flags") or {}).get(index, []):
         st.warning(flag)
 
-    texts = (turn.get("chart_texts") or {}).get(index, {})
     defaults = {"x_title": spec.x_title, "y_title": spec.y_title}      # axis titles start from the column names
     with st.expander("✏️ Add your headline, source and note"):
         st.caption("You own the words on the chart: the app never writes them. They stay on your computer.")
@@ -955,6 +984,7 @@ def main():
     st.session_state.setdefault("history", [])
     st.session_state.setdefault("df", None)
     _keep_inputs_of_hidden_tabs()
+    _TOUR_CHART["placed"] = False
 
     render_header()
     # Filled in at the end of each run, so it always shows the latest action.

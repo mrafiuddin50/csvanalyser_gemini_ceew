@@ -55,7 +55,8 @@ def private_copy(df: pd.DataFrame) -> pd.DataFrame:
 def _figure_to_png(fig) -> bytes:
     import matplotlib.pyplot as plt
     buffer = io.BytesIO()
-    fig.savefig(buffer, format="png", bbox_inches="tight", dpi=110)
+    # 200 dpi: sharp on high-resolution screens; the page shows it at about 640 pixels wide.
+    fig.savefig(buffer, format="png", bbox_inches="tight", dpi=200)
     plt.close(fig)
     return buffer.getvalue()
 

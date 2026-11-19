@@ -147,8 +147,7 @@ def test_full_turn_with_retry_and_history():
         at.run()
         # The answer's own subheader (the audit section adds its own headings too)
         assert [s.value for s in at.main.subheader].count("Means") == 1
-        # AppTest calls this element "imgs" before Streamlit 1.65 and "image" from then on.
-        assert len(at.main.get("image")) + len(at.main.get("imgs")) == 1
+        assert len(_images(at)) == 1
         assert len(at.dataframe) >= 1  # the result table
         # Follow-up question includes the previous question and code
         at.text_input(key="query").input("how many rows?")
@@ -166,8 +165,14 @@ def _button(at, label):
 
 
 def _images(at):
-    # AppTest calls this element "imgs" before Streamlit 1.65 and "image" from then on.
-    return list(at.main.get("image")) + list(at.main.get("imgs"))
+    """Charts on the page: full-resolution PNGs in an <img>, scaled by the browser (see show_png)."""
+    return [m for m in at.markdown if 'class="tda-chart" src="data:image/png;base64,' in m.value]
+
+
+def _image_bytes(at, index=0):
+    import base64
+    value = _images(at)[index].value
+    return base64.b64decode(value.split("base64,", 1)[1].split('"', 1)[0])
 
 
 def test_ceew_chart_with_the_researchers_words_and_downloads():
@@ -189,6 +194,10 @@ def test_ceew_chart_with_the_researchers_words_and_downloads():
     turn_id = turn["id"]
     assert turn["outputs"][0][0] == "chart"
     assert len(_images(at)) == 1
+    # The page gets the full 300 dpi chart (A4 width: 1890 pixels), not a copy shrunk to the display width.
+    from PIL import Image
+    assert Image.open(io.BytesIO(_image_bytes(at))).width == 1890
+    assert 'alt="bar chart (pm25)"' in _images(at)[0].value
     assert any("Gemini's reason for this chart:** Magnitude" in c.value for c in at.caption)
     assert any("largest to smallest" in c.value for c in at.caption)           # a tip from the chart rules
     first_png = turn["chart_png"][0][1]

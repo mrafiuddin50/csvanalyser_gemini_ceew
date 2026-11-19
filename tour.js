@@ -60,7 +60,8 @@
     {
       key: "tour-examples", needsData: true, tab: ASK_TAB,
       title: "Example questions",
-      text: "Not sure what to ask? Click an example. They are built from your column names and types only.",
+      text: "Not sure what to ask? Click an example. They are built from your column names and types only; " +
+        "some ask for a chart, such as a line chart of a monthly average.",
     },
     {
       key: "tour-question", needsData: true, tab: ASK_TAB,
@@ -75,6 +76,15 @@
       text: "Each answer is a card. <b>Result</b> shows the table or chart; <b>Code</b> lets you edit and " +
         "<i>Run my version</i> locally, or <i>Explain this code</i>; <b>Sent to Gemini</b> records each request. " +
         "Under a chart, add your headline, source and note, and download it as PNG or SVG.",
+    },
+    {
+      key: "tour-chart", needsData: true, optional: true, tab: ASK_TAB,
+      title: "Charts in the CEEW style",
+      text: "Charts follow the CEEW data viz skill: CEEW colours and font, bars from zero, at most 15 bars, a pie " +
+        "only for parts that add up to 100%. Gemini picks the chart from your question and the column names; " +
+        "the rules that need your data are checked on your computer, and the notes under the chart say what was " +
+        "decided and why. <b>You own the words</b>: open <i>Add your headline, source and note</i> below the " +
+        "chart. Then download it as a PNG (300 dpi) or an editable SVG.",
     },
     {
       key: "tour-export-session", needsData: true, tab: EXPORT_TAB,

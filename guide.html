@@ -31,6 +31,7 @@
     .toc ol { margin: 6px 0; padding-left: 22px; }
     figure { margin: 16px 0; }
     figure img { width: 100%; border: 1px solid var(--line); border-radius: 6px; display: block; }
+    figure.narrow img { width: auto; max-width: 300px; }
     figcaption { color: var(--grey); font-size: 0.9em; margin-top: 6px; }
     table { border-collapse: collapse; width: 100%; margin: 10px 0 16px; background: #FFFFFF; }
     th, td { border: 1px solid var(--line); padding: 7px 9px; text-align: left; vertical-align: top; }
@@ -81,7 +82,7 @@
     <ol>
       <li><a href="#what">What the app does</a></li>
       <li><a href="#before">Before you start</a></li>
-      <li><a href="#steps">Step by step</a></li>
+      <li><a href="#steps">Step by step</a> (including <a href="#charts">charts in the CEEW house style</a>)</li>
       <li><a href="#audit">Understanding the data quality audit</a></li>
       <li><a href="#privacy">How your data is handled</a></li>
       <li><a href="#tips">Tips for good questions</a></li>
@@ -203,23 +204,34 @@
       chooses what to highlight, because that is choosing the story.</li>
   </ul>
   <figure>
-    <img src="guide-images/07-chart.png" alt="A horizontal bar chart of average PM2.5 by station from the synthetic sample, sorted largest first, with placeholders for the headline, source and note" />
-    <figcaption>A chart from the synthetic sample before you add your words: CEEW colours and font, bars from zero,
-      sorted largest first, the axis title taken from the column name, and placeholders for the headline, source and
-      note.</figcaption>
+    <img src="guide-images/07-chart-answer.jpg" alt="An answer card with a horizontal bar chart of average PM2.5 by station, Gemini's reason for the chart above it, placeholders for the headline, source and note on the chart, and a note that the bars are sorted largest first" />
+    <figcaption>A chart answer from the synthetic sample. Above the chart, Gemini's reason for choosing it; on the
+      chart, placeholders for your words; below it, notes on what was decided (here, the sort order) and how to
+      change it.</figcaption>
   </figure>
   <p><strong>You own the words.</strong> Each chart shows placeholders for the headline, source and note. Open
     <strong>Add your headline, source and note</strong> under the chart, type them and press <strong>Update the
     chart</strong>. A CEEW headline states the insight ("Gujarat added more rooftop solar than the next three states
     combined"), not a description ("Rooftop solar capacity by state"). The app flags words that claim a cause
     ("because of", "drives") or a record ("highest ever"), but never rewrites your text. The axis titles start from
-    your column names; edit them to add the unit.</p>
+    your column names; edit them to add the unit. What you type stays on your computer.</p>
+  <figure>
+    <img src="guide-images/08-chart-words.jpg" alt="The same chart with a headline, an axis title with its unit, a source and a note added; a yellow warning that the words 'because of' state a cause; the boxes for the headline, axis titles, source and note; and buttons to download a PNG or make an SVG copy" />
+    <figcaption>After adding the words and pressing <strong>Update the chart</strong>. The headline says "because
+      of", so the app warns that it claims a cause the chart cannot show. Below: download the chart as a PNG
+      (300&nbsp;dpi), or make an SVG copy.</figcaption>
+  </figure>
   <p>Set <strong>4 · Chart style</strong> in the sidebar to <em>Research report</em> (A4 width, white), <em>
     Presentation</em> (half a 16:9 slide) or <em>Outreach</em> (1080&nbsp;px on cream), and choose the colour pair.
-    Download each chart as a <strong>PNG at 300&nbsp;dpi</strong>, or press <strong>Make an SVG copy</strong> for a
-    file the Outreach and design teams can edit. Charts the skill leaves to the Outreach data viz team (for example
-    line + column charts with two axes) are not drawn. Each chart takes about a second to draw in the browser;
-    it is drawn again only when you change its words or the chart style.</p>
+    Charts already on the page are redrawn to match. Download each chart as a <strong>PNG at 300&nbsp;dpi</strong>,
+    or press <strong>Make an SVG copy</strong> for a file the Outreach and design teams can edit. Charts the skill
+    leaves to the Outreach data viz team (for example line + column charts with two axes) are not drawn. Each chart
+    takes about a second to draw in the browser; it is drawn again only when you change its words or the chart
+    style.</p>
+  <figure class="narrow">
+    <img src="guide-images/09-chart-style.jpg" alt="The sidebar section 4 · Chart style, with the choice of research report, presentation or outreach, and the colour pair" />
+    <figcaption><strong>4 · Chart style</strong> in the sidebar.</figcaption>
+  </figure>
 
   <h3><span class="step">6</span>Take your work away</h3>
   <p>The <strong>③ Export</strong> tab saves the session as a <strong>Jupyter notebook (.ipynb)</strong> or a
@@ -348,6 +360,13 @@
       where the dates are converted.</li>
     <li><strong>Relationships.</strong> Ask: "Is pm25_ugm3 related to pm10_ugm3? Show a scatter plot and the
       correlation." Why does a strong correlation not show that one causes the other?</li>
+    <li><strong>A chart in the CEEW style.</strong> Ask: "Show the average pm25_ugm3 for each station as a chart,
+      treating station names case-insensitively." Read Gemini's reason and the notes under the chart. Add a
+      headline that states the insight, a source ("Synthetic sample data") and the unit in the axis title, then
+      press <em>Update the chart</em>. Try a headline with "because of" and see what the app says.</li>
+    <li><strong>When a chart is refused.</strong> Ask: "Show the number of readings for each station name exactly as
+      written in the data, as a pie chart." The messy names make more than five slices, so read the note: why is
+      it drawn as bars? Then switch <em>4 · Chart style</em> to <em>Outreach</em> and download the PNG.</li>
     <li><strong>Edit and explain.</strong> In any answer's Code tab, change a number (for example a threshold),
       press <em>Run my version</em>, then press <em>Explain this code</em>.</li>
     <li><strong>Export.</strong> Download the session as a notebook and open it in Jupyter or VS Code.</li>
