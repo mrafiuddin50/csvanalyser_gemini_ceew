@@ -7,3 +7,7 @@ primaryColor = "#036493"
 backgroundColor = "#FFFFFF"
 secondaryBackgroundColor = "#F0F2F6"
 textColor = "#333232"
+# Streamlit's own interactive charts (CEEW charts are drawn by csvanalyser/charts.py).
+chartCategoricalColors = ["#E85724", "#029BD6", "#7F7F7F", "#F39673", "#86BFDE", "#B93A26", "#036493", "#CFCFCE"]
+chartSequentialColors = ["#86BFDE", "#86BFDE", "#58AEDB", "#58AEDB", "#029BD6", "#029BD6", "#036493", "#036493", "#023F5C", "#023F5C"]
+chartDivergingColors = ["#811C19", "#B93A26", "#F37E51", "#F39673", "#CFCFCE", "#CFCFCE", "#86BFDE", "#58AEDB", "#036493", "#023F5C"]

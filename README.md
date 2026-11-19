@@ -30,8 +30,33 @@ Features:
 - An automatic data quality audit when a file loads (see below)
 - A local data profile
 - Editable code, with an "Explain this code" button
-- Downloads: results as CSV, and the session as a Python script or Jupyter notebook
+- Charts in the CEEW house style, following the CEEW data viz skill (see below)
+- Downloads: results as CSV, charts as PNG (300 dpi) or SVG, and the session as a Python script or Jupyter notebook
 - A synthetic sample dataset for practice
+
+## CEEW charts
+
+Charts follow the CEEW data viz skill: its chart menu, rules R1 to R8, colour rules and house style
+(`csvanalyser/charts.py`). The skill assumes the AI sees the data; this app's rule is that Gemini never does, so
+the work is split:
+
+- **Gemini** chooses a chart function (`ceew.bar`, `ceew.line`, `ceew.pie`, …) from the question and the column
+  names, and gives a one-line reason. The function list and the rules it must follow are in `csvanalyser/prompts.py`.
+- **The browser** checks the rules that need the data and falls back with a note when one fails: parts must add
+  up to 100% for pie and stacked 100% charts, bars start at zero and hold at most 15 categories, lines break at
+  gaps, more than eight categories turn grey, highlights only when the question names them. These messages are
+  shown to the researcher and never sent to Gemini.
+- **The researcher** writes the headline, source and note under each chart; until then the chart shows
+  placeholders. The headline is checked locally for words that claim a cause or a record; it is never rewritten
+  and never sent to Gemini (a headline states findings from the data).
+
+The sidebar's *4 · Chart style* sets the use (research report, presentation, outreach) and the colour pair.
+Charts are drawn with matplotlib in Familjen Grotesk (`assets/fonts/`, SIL Open Font License, from
+[Familjen-Sthlm/Familjen-Grotesk](https://github.com/Familjen-Sthlm/Familjen-Grotesk)). The Export tab offers
+`ceew_charts.py` so exported notebooks can draw the same charts.
+
+Not included yet: waterfall, treemap, waffle, Sankey and the other GUARDRAIL charts beyond the common ones,
+small multiples, and the outreach colour-blind check.
 
 ## Data quality audit
 
@@ -95,6 +120,7 @@ running pandas. A test page with Pyodide and pandas alone used about 280 MB.
 | `guide.html`, `guide-images/` | The printable user guide and its screenshots |
 | `tour.js`, `tour.css` | The guided tour. Steps find page sections by their `tour-…` container keys in `stlite_app.py`; `tests/test_tour_anchors.py` checks the two match |
 | `.streamlit/config.toml` | The same theme, for running locally with plain Streamlit |
+| `assets/fonts/` | Familjen Grotesk, the CEEW chart font (SIL Open Font License, `OFL.txt`) |
 | `stlite_app.py` | The Streamlit page |
 | `csvanalyser/` | The app's logic: Gemini client, privacy rules and prompts, the sealed-off code runner, file loading, data quality audit, data profile, sample data, exports |
 | `tests/` | Automated tests (no API key needed; Gemini is faked) |

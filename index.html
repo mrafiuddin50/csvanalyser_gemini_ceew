@@ -68,9 +68,23 @@
           files: {
             "stlite_app.py": { url: "./stlite_app.py" },
             "assets/ceew-logo.png": { url: "./assets/ceew-logo.png" },
+            // Streamlit's own interactive charts use CEEW chart colours (CEEW charts are drawn in
+            // csvanalyser/charts.py): orange and blue with their shades, grey as the third colour; one blue from
+            // lightest to darkest for sequential scales; orange below and blue above for diverging ones.
+            // These are lists, which streamlitConfig below does not accept, so they go in a config file.
+            ".streamlit/config.toml": { data: [
+              "[theme]",
+              'chartCategoricalColors = ["#E85724", "#029BD6", "#7F7F7F", "#F39673", "#86BFDE", "#B93A26", "#036493", "#CFCFCE"]',
+              'chartSequentialColors = ["#86BFDE", "#86BFDE", "#58AEDB", "#58AEDB", "#029BD6", "#029BD6", "#036493", "#036493", "#023F5C", "#023F5C"]',
+              'chartDivergingColors = ["#811C19", "#B93A26", "#F37E51", "#F39673", "#CFCFCE", "#CFCFCE", "#86BFDE", "#58AEDB", "#036493", "#023F5C"]',
+            ].join("\n") + "\n" },
+            // CEEW chart font (SIL Open Font License; see assets/fonts/OFL.txt).
+            "assets/fonts/FamiljenGrotesk-Regular.ttf": { url: "./assets/fonts/FamiljenGrotesk-Regular.ttf" },
+            "assets/fonts/FamiljenGrotesk-SemiBold.ttf": { url: "./assets/fonts/FamiljenGrotesk-SemiBold.ttf" },
             "csvanalyser/__init__.py": { url: "./csvanalyser/__init__.py" },
             "csvanalyser/analysis.py": { url: "./csvanalyser/analysis.py" },
             "csvanalyser/audit.py": { url: "./csvanalyser/audit.py" },
+            "csvanalyser/charts.py": { url: "./csvanalyser/charts.py" },
             "csvanalyser/export.py": { url: "./csvanalyser/export.py" },
             "csvanalyser/gemini.py": { url: "./csvanalyser/gemini.py" },
             "csvanalyser/loading.py": { url: "./csvanalyser/loading.py" },

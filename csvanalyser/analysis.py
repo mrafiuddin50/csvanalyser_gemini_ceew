@@ -40,12 +40,13 @@ def past_turns_for_prompt(history: list, anonymise: bool) -> list:
 
 
 def analyse(question: str, df: pd.DataFrame, context: str, history: list, anonymise: bool, llm,
-            progress=None) -> dict:
+            progress=None, style=None) -> dict:
     """Asks the model for code, runs it locally and retries with sanitised errors.
 
     llm: callable taking the prompt text and returning Python code.
     progress: optional callable taking a short message, called at each step so the
         page can show what is happening.
+    style: the CEEW chart style (charts.Style) for charts drawn with plain matplotlib.
     """
     report = progress or (lambda message: None)
     request = prepare_request(df, question, context, anonymise)
@@ -78,7 +79,7 @@ def analyse(question: str, df: pd.DataFrame, context: str, history: list, anonym
         turn["code"] = code
         report("Running the code on your computer…")
         try:
-            result, outputs = run_generated_code(code, request["work_df"], request["reverse"])
+            result, outputs = run_generated_code(code, request["work_df"], request["reverse"], style)
         except Exception as exc:
             failure = (code, sanitise_error(exc, code, request["work_df"]))
             # Full error is shown only to the user, never sent to the model.
@@ -92,7 +93,7 @@ def analyse(question: str, df: pd.DataFrame, context: str, history: list, anonym
     return turn
 
 
-def run_edited_code(base_turn: dict, code: str, df: pd.DataFrame) -> dict:
+def run_edited_code(base_turn: dict, code: str, df: pd.DataFrame, style=None) -> dict:
     """Runs code the user edited, locally only. Nothing is sent to Gemini."""
     request = prepare_request(df, "", "", base_turn.get("anonymise", False))
     turn = {
@@ -108,7 +109,7 @@ def run_edited_code(base_turn: dict, code: str, df: pd.DataFrame) -> dict:
         "error": None,
     }
     try:
-        turn["result"], turn["outputs"] = run_generated_code(code, request["work_df"], request["reverse"])
+        turn["result"], turn["outputs"] = run_generated_code(code, request["work_df"], request["reverse"], style)
     except Exception as exc:
         turn["error"] = f"{type(exc).__name__}: {restore_names(str(exc), request['reverse'])}"
     return turn

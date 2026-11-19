@@ -165,6 +165,64 @@ def _button(at, label):
     return [b for b in at.button if b.label == label][0]
 
 
+def _images(at):
+    # AppTest calls this element "imgs" before Streamlit 1.65 and "image" from then on.
+    return list(at.main.get("image")) + list(at.main.get("imgs"))
+
+
+def test_ceew_chart_with_the_researchers_words_and_downloads():
+    SENT.clear()
+    REPLIES[:] = ["t = df.groupby('site_name', as_index=False)['pm25'].mean()\n"
+                  "ceew.bar(t, 'site_name', 'pm25', why='Magnitude: one value per site.')\nresult = t"]
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT)
+    at.session_state["df"] = df()
+    at.session_state["file_name"] = "test.csv"
+    at.session_state["main_tabs"] = ASK_TAB
+    with mock.patch("urllib.request.urlopen", fake_urlopen):
+        at.run()
+        at.sidebar.text_input[0].input("fake-key")
+        at.text_input(key="query").input("mean pm25 by site as a chart")
+        at.run()
+        _button(at, "Analyse").click().run()
+        assert not at.exception, at.exception
+    turn = at.session_state["history"][0]
+    turn_id = turn["id"]
+    assert turn["outputs"][0][0] == "chart"
+    assert len(_images(at)) == 1
+    assert any("Gemini's reason for this chart:** Magnitude" in c.value for c in at.caption)
+    assert any("largest to smallest" in c.value for c in at.caption)           # a tip from the chart rules
+    first_png = turn["chart_png"][0][1]
+    labels = {d.proto.label for d in at.get("download_button")}
+    assert {"Download PNG (300 dpi)", "Download result as CSV"} <= labels
+
+    # The researcher writes the words; the chart is redrawn locally and the headline is checked.
+    at.text_input(key=f"chartfield_headline_0_{turn_id}").input("Pollution is high because of traffic")
+    at.text_input(key=f"chartfield_source_0_{turn_id}").input("Test data")
+    _button(at, "Update the chart").click().run()
+    assert not at.exception, at.exception
+    turn = at.session_state["history"][0]
+    assert turn["chart_texts"][0]["headline"] == "Pollution is high because of traffic"
+    assert turn["chart_png"][0][1] != first_png
+    assert any("“because of” states a cause" in w.value for w in at.warning)
+    assert at.text_input(key=f"chartfield_x_title_0_{turn_id}").value == "pm25"     # from the column name
+
+    # An editable SVG on request, named after the headline.
+    at.button(key=f"chart_make_svg_0_{turn_id}").click().run()
+    svg = at.session_state["history"][0]["chart_svg"][0][1]
+    assert b"Pollution is high because of traffic" in svg and b"Source: Test data" in svg
+    assert any(d.proto.label == "Download SVG" for d in at.get("download_button"))
+
+    # Changing the chart style redraws the chart.
+    at.sidebar.radio(key="chart_use").set_value("outreach").run()
+    assert not at.exception, at.exception
+    assert at.session_state["history"][0]["chart_png"][0][0][0] == "outreach"
+
+    # Only the question and column names went to Gemini; the words stayed here.
+    assert len(SENT) == 1
+    for secret in ["Anand Vihar", "Punjabi Bagh", "123.45", "678.91", "because of traffic"]:
+        assert secret not in SENT[0]
+
+
 def test_sample_profile_edit_explain_and_downloads():
     SENT.clear()
     REPLIES[:] = [

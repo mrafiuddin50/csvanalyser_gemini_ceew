@@ -4,6 +4,8 @@ addopts = "-q"
 filterwarnings = [
     # Exported notebooks call plt.show(); harmless with the non-interactive test backend.
     "ignore:FigureCanvasAgg is non-interactive:UserWarning",
+    # Raised inside matplotlib's date handling with numpy 2; not from this app's code.
+    "ignore:The 'generic' unit for NumPy timedelta is deprecated:DeprecationWarning",
 ]
 
 [tool.ruff]

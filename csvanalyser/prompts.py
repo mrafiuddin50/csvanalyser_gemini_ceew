@@ -16,6 +16,45 @@ def describe_schema(df: pd.DataFrame) -> str:
     return "\n".join(lines)
 
 
+# Charts follow the CEEW data viz skill. Gemini picks the chart from the question and the column names;
+# the ceew functions check the rules that need the data on the user's computer.
+CHART_RULES = "\n".join([
+    "- CHARTS: draw every chart with the `ceew` chart functions (already available; do not import them). They apply "
+    "the CEEW house style and check the chart rules against the data. Pass the table you plotted: one row per category "
+    "or time point, already aggregated (except ceew.histogram, ceew.boxplot and ceew.scatter, which take one row per "
+    "observation). Arguments name columns of that table. Set `result` to the table you plotted.",
+    "  ceew.bar(data, category, value, orientation='auto', sort=None, highlight=None, why='')  # ranking, magnitude, a few time periods",
+    "  ceew.lollipop(data, category, value, sort=None, highlight=None, why='')",
+    "  ceew.grouped_bar(data, category, values=[...2 to 4 columns], orientation='auto', sort=None, why='')",
+    "  ceew.diverging_bar(data, category, value, reference='zero', sort=None, why='')  # deviation from zero, a target or an average",
+    "  ceew.stacked_bar(data, category, parts=[...], orientation='auto', why='')  # parts of one whole that add up to 100% in every row",
+    "  ceew.pie(data, category, value, why='') / ceew.donut(...)  # at most 5 parts of one whole adding up to 100%",
+    "  ceew.line(data, x, y, series=None, highlight=None, why='')  # change over time; y is one column or a list (wide), or use series= for long data",
+    "  ceew.area(data, x, y, why='')  # one series, or stacked series that are parts of one whole",
+    "  ceew.slope(data, category, start, end, why='') / ceew.range_plot(data, category, start, end, sort=None, why='')  # change between two values",
+    "  ceew.histogram(data, value, bin_width=None, why='')  # distribution; pass bin_width only if the question gives one",
+    "  ceew.boxplot(data, group, value, why='')  # distribution, for specialist readers",
+    "  ceew.scatter(data, x, y, colour=None, why='')  # correlation of two numeric columns",
+    "  ceew.heatmap(data, row, column, value, why='')  # two categorical columns and one value",
+    "  sort: None (largest first), 'descending', 'ascending', 'alphabetical' or 'data' (keep the table's order); "
+    "only pass it if the question asks for an order. Time periods always stay in time order.",
+    "- Choose the chart from what the question compares (ranking, magnitude, change over time, part-to-whole, "
+    "distribution, correlation, deviation). Prefer the simplest chart that shows it. A chart named in the question is a "
+    "proposal: use it only if it fits; otherwise use the chart that fits.",
+    "- Pass `why=`: one or two sentences naming the relationship (for example 'magnitude') and why this chart shows it. "
+    "Base it only on the question and the column names.",
+    "- Do NOT write titles, headlines, annotations, source lines or notes, and do not choose colours: the researcher "
+    "writes the words and the app sets the colours. Never use two y-axes, a size encoding, 3D, or a trend line.",
+    "- highlight: only items the question names. Never choose items to highlight yourself.",
+    "- Not available: line + column charts (two axes), violin, chord, arc and circle timeline charts (the CEEW Outreach "
+    "data viz team makes these), maps and Venn diagrams. If asked for one, say so with st.info and draw the nearest "
+    "chart from the list.",
+    "- Use Streamlit charts (st.line_chart, st.bar_chart) only if the question asks for an interactive chart. "
+    "Use plain matplotlib (`fig, ax = plt.subplots()`, then `st.pyplot(fig)`) only for a chart the list cannot draw; "
+    "NEVER use `plt.show()`.",
+])
+
+
 def build_prompt(schema: str, question: str, context: str, past_turns=(), failure=None) -> str:
     """Builds the full text sent to Gemini.
 
@@ -54,8 +93,7 @@ def build_prompt(schema: str, question: str, context: str, past_turns=(), failur
         "- To show extra tables or text alongside `result`, call `st.write`, `st.markdown`, `st.subheader` or `st.dataframe` directly. "
         "Only these Streamlit functions are available: " + ", ".join(f"st.{name}" for name in sorted(ALLOWED_ST_CALLS)) + ". "
         "Do not use layout functions such as st.columns, st.expander, st.tabs or st.sidebar.",
-        "- For plots, use Streamlit charts (e.g. `st.bar_chart(data)`, `st.line_chart(data)`) or create a matplotlib figure with "
-        "`fig, ax = plt.subplots()` and show it with `st.pyplot(fig)`. NEVER use `plt.show()`. If plotting, set `result` to a short message.",
+        CHART_RULES,
         "- If you use `.agg()`, NEVER use the string '50%'. Use 'median' instead.",
         "- To reset the index of a dataframe, use `.reset_index()`. NEVER use `.reset()`.",
         "- PUT ALL YOUR CODE IN ONE SINGLE ```python ... ``` BLOCK. Do not write any explanations outside the code block.",

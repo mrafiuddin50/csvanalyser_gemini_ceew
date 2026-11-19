@@ -1,6 +1,7 @@
 """Exporting a session as a Python script or Jupyter notebook (code only, no results)."""
 
 import json
+from pathlib import Path
 
 from .privacy import make_aliases
 
@@ -28,9 +29,21 @@ _EXPORT_SHIM = '''class _StreamlitStandIn:
 st = _StreamlitStandIn()'''
 
 
+CHARTS_FILE_NAME = "ceew_charts.py"
+
+
 def exportable_turns(history: list) -> list:
     """Successful turns, oldest first."""
     return [t for t in history if t.get("code") and not t.get("error")]
+
+
+def uses_ceew_charts(turns: list) -> bool:
+    return any("ceew." in t.get("code", "") for t in turns)
+
+
+def charts_module_source() -> str:
+    """The CEEW chart functions as one file, to save next to an exported notebook or script."""
+    return Path(__file__).with_name("charts.py").read_text(encoding="utf-8")
 
 
 def _export_setup(reader_code: str, columns, turns: list) -> str:
@@ -40,6 +53,17 @@ def _export_setup(reader_code: str, columns, turns: list) -> str:
         "import matplotlib.pyplot as plt",
         "",
         _EXPORT_SHIM,
+    ]
+    if uses_ceew_charts(turns):
+        lines += [
+            "",
+            f"# CEEW house-style charts: save {CHARTS_FILE_NAME} (Export tab of the app) next to this file, and the",
+            "# Familjen Grotesk .ttf files in a 'fonts' folder (https://github.com/Familjen-Sthlm/Familjen-Grotesk).",
+            "# Choose use='report', 'presentation' or 'outreach', and pair='orange-blue', 'orange-green' or 'green-blue'.",
+            f"from {CHARTS_FILE_NAME[:-3]} import notebook_charts",
+            "ceew = notebook_charts(use='report', pair='orange-blue')",
+        ]
+    lines += [
         "",
         "# Change the path if your data file is somewhere else.",
         f"original_df = {reader_code}",

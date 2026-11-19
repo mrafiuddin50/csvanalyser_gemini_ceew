@@ -8,6 +8,7 @@ import urllib.request
 import numpy as np
 import pandas as pd
 
+from .charts import Charts, ChartSpec, Style, house_rc
 from .privacy import GENERATED_FILENAME, restore_names
 
 
@@ -100,6 +101,23 @@ class OutputRecorder:
         self.outputs.append((name, args, kwargs))
         return None
 
+    def _add_chart(self, spec: ChartSpec):
+        """Receives each ceew.* chart. It is drawn later by the app, so the researcher's text can be added."""
+        if self._reverse:
+            spec.data = restore_names(spec.data, self._reverse)
+            spec.params = {k: self._restore(v) for k, v in spec.params.items()}
+            spec.x_title, spec.y_title, spec.why = (restore_names(t, self._reverse)
+                                                    for t in (spec.x_title, spec.y_title, spec.why))
+            spec.notes = [(level, restore_names(text, self._reverse)) for level, text in spec.notes]
+        self.outputs.append(("chart", (spec,), {}))
+
+    def _restore(self, value):
+        if isinstance(value, (str, pd.DataFrame, pd.Series)):
+            return restore_names(value, self._reverse)
+        if isinstance(value, (list, tuple)) and all(isinstance(v, str) for v in value):
+            return type(value)(restore_names(v, self._reverse) for v in value)
+        return value
+
 
 class NetworkBlockedError(PermissionError):
     pass
@@ -135,11 +153,13 @@ def network_blocked():
             setattr(obj, attr, original)
 
 
-def run_generated_code(code: str, df: pd.DataFrame, reverse_aliases: dict):
+def run_generated_code(code: str, df: pd.DataFrame, reverse_aliases: dict, style: Style | None = None):
     """Executes generated code in its own namespace on a copy of the data.
 
-    Returns (result, outputs) where outputs is a list of recorded display calls.
+    Returns (result, outputs) where outputs is a list of recorded display calls; ceew.* charts are
+    recorded as ("chart", (ChartSpec,), {}) and drawn by the app.
     Raises NoResultError if the code does not define `result`.
+    style: the CEEW chart style, also applied to charts drawn with plain matplotlib.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -168,17 +188,18 @@ def run_generated_code(code: str, df: pd.DataFrame, reverse_aliases: dict):
         "np": np,
         "plt": plt,
         "st": recorder,
+        "ceew": Charts(recorder._add_chart),
     }
 
     plt.close("all")
     printed = io.StringIO()
     try:
         compiled = compile(code, GENERATED_FILENAME, "exec")
-        with contextlib.redirect_stdout(printed), network_blocked():
+        with matplotlib.rc_context(house_rc(style)), contextlib.redirect_stdout(printed), network_blocked():
             exec(compiled, namespace)
-        # Figures the code drew but never passed to st.pyplot.
-        for number in plt.get_fignums():
-            recorder.outputs.append(("image", (_figure_to_png(plt.figure(number)),), {}))
+            # Figures the code drew but never passed to st.pyplot.
+            for number in plt.get_fignums():
+                recorder.outputs.append(("image", (_figure_to_png(plt.figure(number)),), {}))
     finally:
         plt.close("all")
 

@@ -189,6 +189,31 @@
     <tr><td>Sent to Gemini</td><td>A record of every request made for that answer.</td></tr>
   </table>
 
+  <h3 id="charts">Charts in the CEEW house style</h3>
+  <p>Charts follow the CEEW data viz skill: CEEW colours, the Familjen Grotesk font, and the skill's chart menu and
+    rules. Gemini chooses a chart from your question and the column names; the rules that need the data are
+    checked on your computer. For example:</p>
+  <ul>
+    <li>a pie chart is drawn only for up to five parts that add up to 100%; otherwise you get a bar chart and a
+      note saying why;</li>
+    <li>bars start at zero, hold at most 15 categories, and are sorted largest first unless you ask for another
+      order (time periods always stay in time order);</li>
+    <li>lines break where the data has gaps instead of joining across them;</li>
+    <li>with more than 10 categories, you can name one to three to highlight and the rest turn grey. The app never
+      chooses what to highlight, because that is choosing the story.</li>
+  </ul>
+  <p><strong>You own the words.</strong> Each chart shows placeholders for the headline, source and note. Open
+    <strong>Add your headline, source and note</strong> under the chart, type them and press <strong>Update the
+    chart</strong>. A CEEW headline states the insight ("Gujarat added more rooftop solar than the next three states
+    combined"), not a description ("Rooftop solar capacity by state"). The app flags words that claim a cause
+    ("because of", "drives") or a record ("highest ever"), but never rewrites your text. The axis titles start from
+    your column names; edit them to add the unit.</p>
+  <p>Set <strong>4 · Chart style</strong> in the sidebar to <em>Research report</em> (A4 width, white), <em>
+    Presentation</em> (half a 16:9 slide) or <em>Outreach</em> (1080&nbsp;px on cream), and choose the colour pair.
+    Download each chart as a <strong>PNG at 300&nbsp;dpi</strong>, or press <strong>Make an SVG copy</strong> for a
+    file the Outreach and design teams can edit. Charts the skill leaves to the Outreach data viz team (for example
+    line + column charts with two axes) are not drawn.</p>
+
   <h3><span class="step">6</span>Take your work away</h3>
   <p>The <strong>③ Export</strong> tab saves the session as a <strong>Jupyter notebook (.ipynb)</strong> or a
     <strong>Python script (.py)</strong> containing your questions and the code that answered them. Open the
@@ -253,7 +278,7 @@
       <td>Your question; the instructions in <em>3 · Settings</em>; column names and types; the number of rows; for
         follow-ups, your recent questions and code; for <em>Explain this code</em>, the code.</td>
       <td>The rows and values in your file; results, tables and charts; the file itself; the data quality
-        audit.</td>
+        audit; the headline, source and note you write for a chart.</td>
     </tr>
   </table>
   <ul>
@@ -275,6 +300,8 @@
       "remove duplicate rows first" or "dates are day/month/year".</li>
     <li><strong>Ask for the output you want:</strong> "show a bar chart", "return a table sorted by…" or "give a
       single number".</li>
+    <li><strong>For charts, say what the reader should compare</strong>, and any choices that are yours: the sort
+      order, which items to highlight, or the bin width for a histogram ("in bins of 5").</li>
     <li><strong>One question at a time.</strong> Build up with follow-ups ("now do the same by month").</li>
     <li><strong>Check the code</strong>, especially filters and how missing values are treated, before using a
       result in your work. <em>Explain this code</em> helps.</li>

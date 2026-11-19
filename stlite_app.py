@@ -10,7 +10,9 @@ import streamlit as st
 
 from csvanalyser import audit
 from csvanalyser.analysis import analyse, past_turns_for_prompt, prepare_request, run_edited_code
-from csvanalyser.export import build_notebook, build_script, exportable_turns
+from csvanalyser.charts import PAIR_LABELS, SHAPES, USES, Style, check_headline, file_stem, render as render_chart
+from csvanalyser.export import (CHARTS_FILE_NAME, build_notebook, build_script, charts_module_source,
+                                exportable_turns, uses_ceew_charts)
 from csvanalyser.gemini import FALLBACK_MODELS, GeminiError, call_gemini_text, generate_python_code, list_models
 from csvanalyser.loading import UPLOAD_TYPES, load_table
 from csvanalyser.privacy import restore_names
@@ -135,6 +137,7 @@ def _add_turn(turn: dict):
     for old in history[:-KEEP_RESULTS]:
         if old.get("result") is not None or old.get("outputs"):
             old["result"], old["outputs"], old["csv"], old["result_dropped"] = None, [], None, True
+            old["chart_png"], old["chart_svg"] = {}, {}
 
 
 def _find_turn(turn_id):
@@ -148,7 +151,9 @@ def _task_run_edited(step, turn_id):
         return False, "That answer is no longer available"
     code = st.session_state.get(f"code_{turn_id}", turn["code"])
     step("Running your version of the code on your computer (nothing is sent to Gemini)…")
-    new_turn = run_edited_code(turn, code, df)
+    new_turn = run_edited_code(turn, code, df, _chart_style())
+    # Keep the headline, source and note the researcher already typed for these charts.
+    new_turn["chart_texts"] = {index: dict(texts) for index, texts in (turn.get("chart_texts") or {}).items()}
     _add_turn(new_turn)
     if new_turn["error"]:
         return False, f"Your edited code failed: {new_turn['error'].split(':')[0]}"
@@ -296,14 +301,16 @@ def _render_result(turn: dict):
     if turn.get("result_dropped"):
         st.info(f"To save memory, only the latest {KEEP_RESULTS} answers keep their results. The question "
                 "and code are kept: open **Code** and press **Run my version** to see this result again.")
-    for name, args, kwargs in turn["outputs"]:
+    for index, (name, args, kwargs) in enumerate(turn["outputs"]):
         try:
-            if name == "image":
+            if name == "chart":
+                _render_chart(turn, index, args[0])
+            elif name == "image":
                 st.image(args[0])
             else:
                 getattr(st, name)(*args, **kwargs)
         except Exception as exc:
-            st.warning(f"Could not display an output (st.{name}): {exc}")
+            st.warning(f"Could not display an output ({'chart' if name == 'chart' else 'st.' + name}): {exc}")
     if turn["error"]:
         st.error(f"Error during execution: {turn['error']}")
         return
@@ -315,6 +322,120 @@ def _render_result(turn: dict):
         )
     if turn["attempts"] > 1:
         st.caption(f"The first attempt failed; fixed automatically after {turn['attempts']} attempts.")
+
+
+# ---------------------------------------------------------------------------
+# CEEW charts
+#
+# Charts from the ceew.* functions are stored as specifications and drawn here, so the researcher's
+# headline, source and note (and the chart style in the sidebar) can be applied without asking Gemini
+# again. Nothing here is sent anywhere.
+# ---------------------------------------------------------------------------
+
+CHART_DISPLAY_WIDTH = {"report": 680, "presentation": 460, "outreach": 460}
+CHART_FIELDS = [
+    ("headline", "Headline",
+     "CEEW headlines state the insight, not a description of the data: for example 'Gujarat added more rooftop "
+     "solar than the next three states combined', not 'Rooftop solar capacity by state, 2024'. It must claim no "
+     "more than the chart shows."),
+    ("x_title", "Horizontal axis title", "Taken from your column name; put the unit here (for example 'MW'), "
+                                         "not in the tick labels. Write INR, not the rupee symbol."),
+    ("y_title", "Vertical axis title", "Taken from your column name; put the unit here, not in the tick labels."),
+    ("source", "Source", "Every CEEW chart needs a source line. The app never writes or guesses one."),
+    ("note", "Note", "For example 'Figures may not add to 100% due to rounding'. For survey data, give the sample "
+                     "size (n = …)."),
+]
+
+
+def _chart_style() -> Style:
+    return Style(use=st.session_state.get("chart_use") or "report",
+                 shape=st.session_state.get("chart_shape") or "square",
+                 pair=st.session_state.get("chart_pair") or "orange-blue")
+
+
+def _chart_key(style: Style, texts: dict):
+    return (style.use, style.shape, style.pair, tuple(sorted(texts.items())))
+
+
+def _chart_png(turn: dict, index: int, spec) -> bytes:
+    """The chart at 300 dpi, drawn again only when the style or the researcher's text changes."""
+    texts = (turn.get("chart_texts") or {}).get(index, {})
+    style = _chart_style()
+    key = _chart_key(style, texts)
+    cached = (turn.setdefault("chart_png", {})).get(index)
+    if cached is None or cached[0] != key:
+        cached = (key, render_chart(spec, style, texts))
+        turn["chart_png"][index] = cached
+    return cached[1]
+
+
+def _chart_field_key(field: str, index: int, turn_id) -> str:
+    return f"chartfield_{field}_{index}_{turn_id}"
+
+
+def _on_chart_text(turn_id, index):
+    turn = _find_turn(turn_id)
+    if turn is None:
+        return
+    texts = {field: (st.session_state.get(_chart_field_key(field, index, turn_id)) or "").strip()
+             for field, _, _ in CHART_FIELDS}
+    turn.setdefault("chart_texts", {})[index] = texts
+    turn.setdefault("chart_flags", {})[index] = check_headline(texts["headline"], texts["note"])
+
+
+def _on_make_svg(turn_id, index):
+    turn = _find_turn(turn_id)
+    if turn is None or index >= len(turn.get("outputs") or []):
+        return
+    spec = turn["outputs"][index][1][0]
+    texts = (turn.get("chart_texts") or {}).get(index, {})
+    style = _chart_style()
+    turn.setdefault("chart_svg", {})[index] = (_chart_key(style, texts), render_chart(spec, style, texts, fmt="svg"))
+
+
+def _render_chart(turn: dict, index: int, spec):
+    turn_id = turn.get("id", 0)
+    if spec.why:
+        st.caption(f"**Gemini's reason for this chart:** {spec.why}")
+    for level, text in spec.notes:
+        if level == "fallback":
+            st.info(text)
+    if spec.kind == "table":
+        st.dataframe(spec.data)
+        return
+    st.image(_chart_png(turn, index, spec), width=CHART_DISPLAY_WIDTH.get(_chart_style().use, 680))
+    tips = [text for level, text in spec.notes if level != "fallback"]
+    if tips:
+        st.caption("\n".join(f"- {tip}" for tip in tips))
+    for flag in (turn.get("chart_flags") or {}).get(index, []):
+        st.warning(flag)
+
+    texts = (turn.get("chart_texts") or {}).get(index, {})
+    defaults = {"x_title": spec.x_title, "y_title": spec.y_title}      # axis titles start from the column names
+    with st.expander("✏️ Add your headline, source and note"):
+        st.caption("You own the words on the chart: the app never writes them. They stay on your computer.")
+        with st.form(f"chart_form_{index}_{turn_id}", border=False):
+            for field, label, help_text in CHART_FIELDS:
+                if field in ("x_title", "y_title") and field not in spec.axis_fields:
+                    continue
+                key = _chart_field_key(field, index, turn_id)
+                st.session_state.setdefault(key, texts.get(field, defaults.get(field, "")))
+                st.text_input(label, key=key, help=help_text)
+            st.form_submit_button("Update the chart", on_click=_on_chart_text, args=(turn_id, index))
+
+    stem = file_stem(spec, texts, f"chart-{turn_id}-{index + 1}")
+    png_col, svg_col = st.columns(2)
+    png_col.download_button("Download PNG (300 dpi)", data=_chart_png(turn, index, spec), file_name=f"{stem}.png",
+                            mime="image/png", key=f"chart_png_{index}_{turn_id}")
+    svg = (turn.get("chart_svg") or {}).get(index)
+    if svg is not None and svg[0] == _chart_key(_chart_style(), texts):
+        svg_col.download_button("Download SVG", data=svg[1], file_name=f"{stem}.svg", mime="image/svg+xml",
+                                key=f"chart_svg_{index}_{turn_id}")
+    else:
+        svg_col.button("Make an SVG copy", key=f"chart_make_svg_{index}_{turn_id}", on_click=_on_make_svg,
+                       args=(turn_id, index),
+                       help="For the Outreach and design teams to edit in Illustrator, Figma or Inkscape. "
+                            "The text stays editable.")
 
 
 def _render_code(turn: dict, df: pd.DataFrame):
@@ -384,7 +505,8 @@ DATA_HANDLING_NOTE = """
 and types, and the number of rows. For follow-up questions, your last few questions and the code that
 answered them. For *Explain this code*, the code itself.
 
-**Never sent:** the rows or values in your file, results, tables, charts, or the file itself. Error
+**Never sent:** the rows or values in your file, results, tables, charts, the headline, source and note you
+write for a chart, or the file itself. Error
 messages are cleaned of data values before the model sees them, and the generated code cannot reach
 the internet.
 
@@ -546,7 +668,8 @@ def _visible(tab) -> bool:
 # Writing each value back at the start of every run keeps it. (The tab selections are written back
 # too, so a tab chosen by the app, such as Ask questions after clicking an example, also sticks in
 # Streamlit's test harness, which does not report tab selections.)
-KEPT_INPUTS = ("query", "main_tabs", "data_tabs", "code_", "card_tabs_")
+KEPT_INPUTS = ("query", "main_tabs", "data_tabs", "code_", "card_tabs_", "chartfield_")
+PER_ANSWER_INPUTS = ("code_", "card_tabs_", "chartfield_")    # keys end in the answer's id
 
 
 def _keep_inputs_of_hidden_tabs():
@@ -554,7 +677,7 @@ def _keep_inputs_of_hidden_tabs():
     for key in list(st.session_state.keys()):
         if not key.startswith(KEPT_INPUTS):
             continue
-        if key.startswith(("code_", "card_tabs_")) and key.rsplit("_", 1)[-1] not in current:
+        if key.startswith(PER_ANSWER_INPUTS) and key.rsplit("_", 1)[-1] not in current:
             del st.session_state[key]          # belongs to an answer that has been cleared
         else:
             st.session_state[key] = st.session_state[key]
@@ -661,6 +784,18 @@ def render_sidebar(df):
             )
             context = st.text_area("Instructions sent with every question", value=DEFAULT_CONTEXT, height=130)
             st.button("Clear question history", key="clear_sidebar", on_click=_clear_history)
+    with st.sidebar.container(key="tour-charts"):
+        with st.expander("4 · Chart style"):
+            st.radio("Charts are for", list(USES), format_func=USES.get, key="chart_use",
+                     help="Sets the size, background, font size and labels, following the CEEW data viz skill. "
+                          "Research report: A4 width, white, legend below. Presentation: half a 16:9 slide. "
+                          "Outreach: 1080 px on cream.")
+            if st.session_state.get("chart_use") == "outreach":
+                st.radio("Outreach size", list(SHAPES), format_func=SHAPES.get, key="chart_shape")
+            st.selectbox("Colours", list(PAIR_LABELS), format_func=PAIR_LABELS.get, key="chart_pair",
+                         help="Each chart uses two of CEEW's three primary colours, with grey as the third colour. "
+                              "No pair is the default: vary it across charts.")
+            st.caption("Charts are redrawn when you change these. Nothing here is sent to Gemini.")
     user_api_key = (st.session_state.get("api_key") or "").strip()
     return user_api_key, model, anonymise, context
 
@@ -728,7 +863,7 @@ def render_ask(df, api_key, model, anonymise, context):
                 turn = analyse(
                     query, df, context, st.session_state["history"], anonymise,
                     llm=lambda prompt: generate_python_code(prompt, model, api_key),
-                    progress=box.write,
+                    progress=box.write, style=_chart_style(),
                 )
                 seconds = time.perf_counter() - start
                 retries = f" after {turn['attempts']} attempts" if turn["attempts"] > 1 else ""
@@ -772,6 +907,13 @@ def render_export(df: pd.DataFrame):
             "Python script (.py)", data=script.encode("utf-8"), disabled=not turns_to_export,
             file_name="analysis_session.py", mime="text/x-python", key="export_script",
         )
+        if turns_to_export and uses_ceew_charts(turns_to_export):
+            st.download_button(f"CEEW chart functions ({CHARTS_FILE_NAME})", data=charts_module_source().encode("utf-8"),
+                               file_name=CHARTS_FILE_NAME, mime="text/x-python", key="export_charts")
+            st.caption(f"Your answers draw CEEW charts. Save **{CHARTS_FILE_NAME}** next to the notebook or script. "
+                       "For the CEEW font, put the Familjen Grotesk .ttf files "
+                       "([free, from GitHub](https://github.com/Familjen-Sthlm/Familjen-Grotesk/tree/master/fonts/ttf)) "
+                       "in a folder called *fonts* next to it.")
     with st.container(key="tour-export-report"):
         st.subheader("Data quality report")
         html = st.session_state.get("audit_html")
