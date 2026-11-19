@@ -949,18 +949,22 @@ def _fmt(value: float, decimals: int | None = None) -> str:
     return text.replace("-", "−")
 
 
-def _value_formatter(axis):
-    from matplotlib.ticker import FuncFormatter
+def _value_formatter(axis=None):
+    """Tick labels with as many decimals as the tick step needs, worked out once per axis."""
+    from matplotlib.ticker import Formatter
 
-    def fmt(v, _pos):
-        locs = axis.get_majorticklocs()
-        steps = np.diff(np.sort(locs))
-        step = float(steps[steps > 0].min()) if len(steps[steps > 0]) else 1.0
-        decimals = max(0, -int(math.floor(math.log10(step) + 1e-9)))
-        if abs(v) < step / 1e6:
-            v = 0.0
-        return _fmt(v, decimals)
-    return FuncFormatter(fmt)
+    class ValueFormatter(Formatter):
+        def format_ticks(self, values):
+            steps = np.diff(np.sort(np.asarray(values, dtype=float)))
+            steps = steps[steps > 0]
+            step = float(steps.min()) if len(steps) else 1.0
+            decimals = max(0, -int(math.floor(math.log10(step) + 1e-9)))
+            return [_fmt(0.0 if abs(v) < step / 1e6 else v, decimals) for v in values]
+
+        def __call__(self, value, pos=None):
+            return _fmt(value)
+
+    return ValueFormatter()
 
 
 def _classes(values, diverging: bool):

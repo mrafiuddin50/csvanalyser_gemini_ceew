@@ -151,14 +151,20 @@ The tests run in normal Python, not in the browser. After changing `index.html` 
 
 ## Benchmark
 
-The benchmark asks 16 questions with known answers about two synthetic datasets and scores each model's answers. It needs your own Gemini API key, read from an environment variable. Never put the key in a file in this repository.
+The benchmark scores each model on two synthetic datasets, in two suites:
+
+- **answers**: 16 questions with one known number or label;
+- **charts**: 14 chart requests, scored on the CEEW chart rules. An answer counts as correct only if it draws a fitting kind of chart with the right numbers, writes no title, chooses no colours, uses no second axis, and highlights only what the question names. Two requests ask for things the rules refuse (an AI-written title, a chart with two y-axes).
+
+It needs your own Gemini API key, read from an environment variable. Never put the key in a file in this repository.
 
 ```bash
 export GEMINI_API_KEY=your-key-here
 python -m benchmark.run_benchmark --models gemini-2.5-flash,gemini-2.5-pro
+python -m benchmark.run_benchmark --suite charts      # only the chart requests
 ```
 
-The run prints accuracy, retries and time per model, and saves detailed results in `benchmark/results/`, which git ignores. Each question uses one to three API requests per model.
+The run prints accuracy, retries and time per model and suite, and saves detailed results (with the problems found in each chart answer) in `benchmark/results/`, which git ignores. Each question uses one to three API requests per model.
 
 To check the benchmark itself without a key or network access, run:
 

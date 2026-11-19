@@ -73,7 +73,8 @@
       key: "tour-answers", needsData: true, optional: true, tab: ASK_TAB,
       title: "Your answers",
       text: "Each answer is a card. <b>Result</b> shows the table or chart; <b>Code</b> lets you edit and " +
-        "<i>Run my version</i> locally, or <i>Explain this code</i>; <b>Sent to Gemini</b> records each request.",
+        "<i>Run my version</i> locally, or <i>Explain this code</i>; <b>Sent to Gemini</b> records each request. " +
+        "Under a chart, add your headline, source and note, and download it as PNG or SVG.",
     },
     {
       key: "tour-export-session", needsData: true, tab: EXPORT_TAB,
@@ -94,6 +95,13 @@
       title: "3 · Settings",
       text: "Turn on <b>Anonymise column names</b> if the names themselves are sensitive, edit the instructions " +
         "sent with every question, or clear your question history.",
+    },
+    {
+      key: "tour-charts", sidebar: true, side: "right",
+      title: "4 · Chart style",
+      text: "Charts follow the CEEW data viz skill. Choose what they are for (<b>research report</b>, " +
+        "<b>presentation</b> or <b>outreach</b>) and the colour pair; charts already drawn are redrawn to match. " +
+        "The app never writes a chart's headline, source or note: you add them under each chart.",
     },
     {
       key: "tour-activity", sidebar: true, side: "right",

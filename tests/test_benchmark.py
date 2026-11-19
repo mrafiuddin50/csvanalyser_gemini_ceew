@@ -5,7 +5,7 @@ import pytest
 
 from benchmark import run_benchmark
 from benchmark.datasets import make_survey_dataset
-from benchmark.questions import QUESTIONS, Question
+from benchmark.questions import CHART_QUESTIONS, QUESTIONS, Question
 
 
 def test_question_ids_unique_and_kinds_valid():
@@ -32,8 +32,41 @@ def test_reference_answers_are_single_values():
 
 def test_self_check_scores_full_marks():
     summary = run_benchmark.main(["--self-check"])
-    assert summary.loc["self-check", "accuracy_pct"] == 100.0
-    assert summary.loc["self-check", "mean_attempts"] == 1.0
+    assert list(summary["suite"]) == ["answers", "charts"]
+    assert (summary["accuracy_pct"] == 100.0).all() and (summary["mean_attempts"] == 1.0).all()
+    assert list(summary["questions"]) == [len(QUESTIONS), len(CHART_QUESTIONS)]
+
+
+def test_every_chart_question_has_a_reference_chart():
+    charts = run_benchmark.reference_charts(CHART_QUESTIONS)
+    for q in CHART_QUESTIONS:
+        if q.charts:
+            assert charts[q.id] is not None and len(run_benchmark.chart_numbers(charts[q.id])), q.id
+            assert not [lvl for lvl, _ in charts[q.id].notes if lvl == "fallback"], q.id
+
+
+def _turn(code, outputs=(), error=None):
+    return {"code": code, "outputs": list(outputs), "error": error}
+
+
+def test_chart_scoring_catches_broken_rules():
+    data = make_survey_dataset()
+    question = next(q for q in CHART_QUESTIONS if q.id == "ch12")
+    reference = run_benchmark.reference_charts([question])["ch12"]
+    good_outputs = run_benchmark.run_generated_code(question.answer_code, data, {})[1]
+    assert run_benchmark.score_chart(question, _turn(question.answer_code, good_outputs), reference)["correct"]
+
+    titled = question.answer_code + "\nplt.title('LPG use')"
+    assert "wrote a title" in run_benchmark.score_chart(question, _turn(titled, good_outputs), reference)["problems"]
+    no_highlight = question.answer_code.replace(", highlight=['Lakeside']", "")
+    outputs = run_benchmark.run_generated_code(no_highlight, data, {})[1]
+    assert "highlighted" in run_benchmark.score_chart(question, _turn(no_highlight, outputs), reference)["problems"]
+    wrong = question.answer_code.replace("* 100", "* 10")
+    outputs = run_benchmark.run_generated_code(wrong, data, {})[1]
+    assert "numbers differ" in run_benchmark.score_chart(question, _turn(wrong, outputs), reference)["problems"]
+    scatter = "ceew.scatter(df, 'household_size', 'monthly_kwh')\nresult = df"
+    outputs = run_benchmark.run_generated_code(scatter, data, {})[1]
+    assert "chart kind: scatter" in run_benchmark.score_chart(question, _turn(scatter, outputs), reference)["problems"]
 
 
 NUM = Question("x", "air_quality", "q", "number", "result = 1", rel_tol=0.01)
