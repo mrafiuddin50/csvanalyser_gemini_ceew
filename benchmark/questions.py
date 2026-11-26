@@ -95,6 +95,7 @@ class ChartQuestion:
     answer_code: str
     highlight: tuple = ()
     rel_tol: float = 0.01
+    params: tuple = ()          # (name, value) pairs the chart must have, e.g. (("orientation", "vertical"),)
 
 
 _STATION = "df['station'].str.strip().str.title()"
@@ -186,4 +187,15 @@ CHART_QUESTIONS = [
                   "st.info('Line and column charts with two y-axes are made by the CEEW Outreach data viz team.')\n"
                   "t = df.groupby('district', as_index=False)['monthly_kwh'].mean()\n"
                   "ceew.bar(t, 'district', 'monthly_kwh')\nresult = t"),
+    # Hourly monitor data, as exported from CPCB or OpenAQ: times stored as text, long monitor names.
+    ChartQuestion("ch15", "hourly_air", "Give the average PM2.5 value by hour.",
+                  ("line", "bar"),
+                  "times = pd.to_datetime(df['observation_hour_start'])\n"
+                  "t = df.groupby(times.dt.hour.rename('hour'))['average_value_in_hour'].mean().reset_index()\n"
+                  "ceew.line(t, 'hour', 'average_value_in_hour')\nresult = t"),
+    ChartQuestion("ch16", "hourly_air", "Plot a vertical box plot of PM2.5 by station.",
+                  ("boxplot",),
+                  "ceew.boxplot(df, 'location_name', 'average_value_in_hour', orientation='vertical')\n"
+                  "result = df.groupby('location_name')['average_value_in_hour'].describe()",
+                  params=(("orientation", "vertical"),)),
 ]

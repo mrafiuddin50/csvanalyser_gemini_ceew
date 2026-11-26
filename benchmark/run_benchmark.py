@@ -48,7 +48,8 @@ CHART_CONTEXT = (
 
 # Things the chart rules forbid, found in the generated code.
 RULE_BREAKS = {
-    "wrote a title": r"\.set_title\(|plt\.title\(|suptitle\(|\bst\.title\(",
+    # A title drawn on the chart. st.title is a page heading above the answer, not on the chart or its download.
+    "wrote a title": r"\.set_title\(|plt\.title\(|suptitle\(",
     "used a second axis": r"twinx\(|twiny\(|secondary_y",
     "chose colours": r"\b(colors?|cmap|palette)\s*=",      # matplotlib's spelling; ceew.scatter's colour= is fine
     "drew without the ceew functions": r"plt\.subplots\(|plt\.figure\(|\.plot\(|st\.(bar|line|area|scatter)_chart\(",
@@ -150,6 +151,7 @@ def score_chart(question: ChartQuestion, turn: dict, reference) -> dict:
     specs = chart_specs(turn["outputs"]) if not turn["error"] else []
     if turn["error"]:
         problems.append("error")
+    matching = []
     if question.charts:
         matching = [s for s in specs if s.kind in question.charts]
         if not matching:
@@ -158,6 +160,10 @@ def score_chart(question: ChartQuestion, turn: dict, reference) -> dict:
             ours, theirs = chart_numbers(matching[0]), chart_numbers(reference)
             if len(ours) != len(theirs) or not np.allclose(ours, theirs, rtol=question.rel_tol, atol=1e-6):
                 problems.append("numbers differ")
+        for name, wanted_value in question.params:
+            got = matching[0].params.get(name) if matching else None
+            if matching and got != wanted_value:
+                problems.append(f"{name} is {got}, not {wanted_value}")
     code = turn.get("code") or ""
     for rule, pattern in RULE_BREAKS.items():
         if rule.startswith("drew without") and not question.charts:
@@ -202,6 +208,7 @@ def run_charts(models, questions, delay: float = 0.0, api_key: str = "", self_ch
                 "model": model, "question": q.id, "correct": score["correct"], "attempts": turn["attempts"],
                 "error": turn["error"] or "", "answer": kinds, "expected": ",".join(q.charts) or "any",
                 "problems": score["problems"], "seconds": round(seconds, 2),
+                "code": turn.get("code") or "",       # Gemini's code: column names only, never data values
             })
             mark = "ok " if score["correct"] else "XX "
             print(f"{mark} {model:<28} {q.id}  attempts={turn['attempts']}  chart={kinds}"

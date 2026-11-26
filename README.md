@@ -154,7 +154,7 @@ The tests run in normal Python, not in the browser. After changing `index.html` 
 The benchmark scores each model on two synthetic datasets, in two suites:
 
 - **answers**: 16 questions with one known number or label;
-- **charts**: 14 chart requests, scored on the CEEW chart rules. An answer counts as correct only if it draws a fitting kind of chart with the right numbers, writes no title, chooses no colours, uses no second axis, and highlights only what the question names. Two requests ask for things the rules refuse (an AI-written title, a chart with two y-axes).
+- **charts**: 16 chart requests, including hourly monitor data stored as text (average by hour of day, a vertical box plot by station), scored on the CEEW chart rules. An answer counts as correct only if it draws a fitting kind of chart with the right numbers, writes no title, chooses no colours, uses no second axis, and highlights only what the question names. Two requests ask for things the rules refuse (an AI-written title, a chart with two y-axes).
 
 It needs your own Gemini API key, read from an environment variable. Never put the key in a file in this repository.
 

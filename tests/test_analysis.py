@@ -1,5 +1,7 @@
 """Prompts, self-correcting retries, follow-ups and anonymised column names."""
 
+import re
+
 import pandas as pd
 import pytest
 
@@ -105,7 +107,8 @@ def test_anonymise():
     turn = analysis.analyse("mean pm25 by Site_Name", df, "use pm25", [], True, llm)
     assert turn["error"] is None, turn["error"]
     for name in df.columns:
-        assert name not in prompts[0].lower().replace("col_", "#"), name
+        # As a word: the fixed instructions may name pandas functions such as `pd.to_datetime`.
+        assert not re.search(rf"\b{re.escape(name)}\b", prompts[0].lower().replace("col_", "#")), name
     assert "mean col_4 by col_1" in prompts[0]
     assert turn["result"].index.name == "site_name"
     assert_no_leak(prompts)

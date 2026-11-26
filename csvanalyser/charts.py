@@ -285,13 +285,33 @@ def _unique(frame, col, func):
                               f"(for example with groupby), then plot the summary table.")
 
 
+# Whole-number columns that count time: the name gives the unit, the values must fit its range.
+# Hour of day, month and weekday come out of pandas (df[col].dt.hour) as plain integers, often still
+# carrying the original column's name, such as 'observation_hour_start'.
+TIME_UNITS = [
+    (re.compile(r"year|^yr$|^fy$"), 1800, 2200),
+    (re.compile(r"hour|^hr$"), 0, 23),
+    (re.compile(r"weekday|day_?of_?week|dow"), 0, 7),
+    (re.compile(r"month"), 1, 12),
+    (re.compile(r"quarter|^qtr$"), 1, 4),
+    (re.compile(r"week"), 0, 53),
+    (re.compile(r"day"), 1, 31),
+]
+
+
 def is_time(series: pd.Series) -> bool:
+    """Dates, periods, and whole numbers that count years, months, weekdays, days or hours."""
     if pd.api.types.is_datetime64_any_dtype(series) or isinstance(series.dtype, pd.PeriodDtype):
         return True
+    if not pd.api.types.is_integer_dtype(series) or pd.api.types.is_bool_dtype(series):
+        return False
     name = str(series.name or "").lower()
-    if pd.api.types.is_integer_dtype(series) and ("year" in name or name in ("yr", "fy")):
-        values = series.dropna()
-        return len(values) > 0 and values.between(1800, 2200).all()
+    values = series.dropna()
+    if len(values) == 0:
+        return False
+    for pattern, low, high in TIME_UNITS:
+        if pattern.search(name):
+            return bool(values.between(low, high).all())
     return False
 
 
@@ -373,6 +393,16 @@ def _table(frame, spec, message) -> ChartSpec:
     return spec
 
 
+_SHARE_NAME = re.compile(r"share|percent|pct|%|proportion|ratio|rate|fraction", re.IGNORECASE)
+
+
+def _are_counts(series: pd.Series) -> bool:
+    """Whole, non-negative numbers in a column not named as a share: counts, not percentages."""
+    values = series.dropna()
+    return (len(values) > 0 and not _SHARE_NAME.search(str(series.name or ""))
+            and bool((values >= 0).all()) and bool(np.allclose(values, np.round(values))))
+
+
 def _long_labels(labels, limit=10):
     return max((len(label) for label in labels), default=0) > limit
 
@@ -380,6 +410,119 @@ def _long_labels(labels, limit=10):
 # ---------------------------------------------------------------------------
 # Chart functions (what generated code calls as ceew.<name>)
 # ---------------------------------------------------------------------------
+
+# Other names Gemini uses for the arguments (often matplotlib's or seaborn's). They are mapped to ours,
+# so a chart is not lost to a retry over a keyword. Anything else is set aside with a note (_flexible).
+_ONE_VALUE = {"x": "category", "y": "value", "categories": "category", "labels": "category", "label": "category",
+              "names": "category", "by": "category", "values": "value", "column": "value"}
+ARGUMENT_ALIASES = {
+    "bar": _ONE_VALUE, "lollipop": _ONE_VALUE, "diverging_bar": _ONE_VALUE, "pie": _ONE_VALUE,
+    "donut": _ONE_VALUE,
+    "grouped_bar": {"x": "category", "y": "values", "by": "category", "series": "values", "columns": "values"},
+    "stacked_bar": {"x": "category", "y": "parts", "by": "category", "values": "parts", "columns": "parts",
+                    "series": "parts"},
+    "line": {"category": "x", "value": "y", "values": "y", "columns": "y", "hue": "series", "group": "series",
+             "by": "series", "color": "series", "colour": "series"},
+    "area": {"category": "x", "value": "y", "values": "y", "columns": "y"},
+    "slope": {"x": "category", "before": "start", "after": "end"},
+    "range_plot": {"x": "category", "before": "start", "after": "end"},
+    "histogram": {"x": "value", "column": "value", "y": "value"},
+    "boxplot": {"x": "group", "y": "value", "by": "group", "category": "group", "column": "value",
+                "vert": "orientation"},
+    "scatter": {"hue": "colour", "color": "colour", "group": "colour", "by": "colour"},
+    "heatmap": {"x": "column", "y": "row", "columns": "column", "index": "row", "values": "value"},
+}
+
+# Other names for the chart functions themselves, with any arguments they imply.
+FUNCTION_ALIASES = {
+    "bar_chart": ("bar", {}), "barh": ("bar", {"orientation": "horizontal"}),
+    "horizontal_bar": ("bar", {"orientation": "horizontal"}), "column": ("bar", {"orientation": "vertical"}),
+    "column_chart": ("bar", {"orientation": "vertical"}), "vertical_bar": ("bar", {"orientation": "vertical"}),
+    "line_chart": ("line", {}), "area_chart": ("area", {}), "pie_chart": ("pie", {}),
+    "donut_chart": ("donut", {}), "doughnut": ("donut", {}), "box": ("boxplot", {}), "box_plot": ("boxplot", {}),
+    "hist": ("histogram", {}), "scatter_plot": ("scatter", {}), "scatterplot": ("scatter", {}),
+    "heat_map": ("heatmap", {}), "grouped_bar_chart": ("grouped_bar", {}), "stacked_bar_chart": ("stacked_bar", {}),
+    "slope_chart": ("slope", {}), "dumbbell": ("range_plot", {}), "range": ("range_plot", {}),
+}
+
+
+def _flexible(method):
+    """Accepts Gemini's other names for arguments, and sets aside arguments the rules do not use."""
+    import functools
+    import inspect
+
+    params = list(inspect.signature(method).parameters)[1:]      # without self
+    aliases = ARGUMENT_ALIASES.get(method.__name__, {})
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        given = set(params[:len(args)]) | set(kwargs)
+        ignored = []
+        for alias in [k for k in kwargs if k not in params]:
+            value = kwargs.pop(alias)
+            canonical = aliases.get(alias)
+            if canonical and canonical not in given:
+                kwargs[canonical] = value
+                given.add(canonical)
+            else:
+                ignored.append(alias)
+        outermost = not self.__dict__.get("_depth")
+        if outermost:
+            self._ignored = []
+        self._ignored = (self.__dict__.get("_ignored") or []) + ignored
+        self._depth = self.__dict__.get("_depth", 0) + 1
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self._depth -= 1
+            if outermost:
+                self._ignored = []
+    return wrapper
+
+
+def _orientation(value, func):
+    """'vertical' / 'horizontal' / 'auto' from the forms Gemini uses (v, h, vert=True ...)."""
+    if value is True:
+        return "vertical"
+    if value is False:
+        return "horizontal"
+    text = str(value or "auto").strip().lower()
+    if text in ("v", "vertical", "vert", "column", "columns", "up"):
+        return "vertical"
+    if text in ("h", "horizontal", "horiz", "bar", "barh", "sideways"):
+        return "horizontal"
+    if text == "auto":
+        return "auto"
+    raise ChartInputError(f"ceew.{func}: `orientation` must be 'auto', 'horizontal' or 'vertical'.")
+
+
+def _wrap_label(label: str, width: int = 14) -> str:
+    """Long category names on a horizontal axis go on several lines instead of being rotated."""
+    return "\n".join(textwrap.wrap(str(label), width, break_long_words=False)) or str(label)
+
+
+class ChartHandle:
+    """What a chart function returns. Generated code sometimes treats it like a matplotlib figure or axes
+    (fig = ceew.bar(...); ax.set_title(...); st.pyplot(fig)); every such call is accepted and does nothing,
+    because the app draws the chart itself."""
+
+    def __init__(self, kind: str):
+        self.kind = kind
+
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return lambda *args, **kwargs: self
+
+    def __call__(self, *args, **kwargs):
+        return self
+
+    def __iter__(self):                  # fig, ax = ceew.bar(...)
+        return iter((self, self))
+
+    def __repr__(self):
+        return f"<CEEW {self.kind} chart: drawn by the app>"
+
 
 class Charts:
     """The chart functions. `sink` receives each ChartSpec (the app stores it; a notebook draws it)."""
@@ -390,18 +533,32 @@ class Charts:
     def __getattr__(self, name):
         if name.startswith("_"):
             raise AttributeError(name)
+        if name in FUNCTION_ALIASES:                     # ceew.box_plot, ceew.bar_chart, ceew.column_chart ...
+            target, preset = FUNCTION_ALIASES[name]
+            method = getattr(self, target)
+            return lambda *args, **kwargs: method(*args, **{**preset, **kwargs})
         raise AttributeError(f"ceew.{name} is not available. Chart functions: " + ", ".join(
             f"ceew.{n}" for n in CHART_FUNCTIONS))
 
     def _emit(self, spec: ChartSpec):
+        ignored = self.__dict__.get("_ignored") or []
+        if ignored:
+            spec.note("Not used: " + ", ".join(ignored) + ". The chart rules set the titles, colours and sizes; "
+                      "you write the words under the chart.")
+            self._ignored = []
         self._sink(spec)
-        return None
+        return ChartHandle(spec.kind)
 
     # --- Ranking and magnitude ------------------------------------------------------------------
 
     def bar(self, data, category=None, value=None, orientation="auto", sort=None, highlight=None, why=""):
         """Bar chart of one value per category. Horizontal by default; vertical for time periods."""
         func = "bar"
+        orientation = _orientation(orientation, func)
+        if isinstance(value, (list, tuple)):
+            if len(value) > 1:      # several value columns: that is a grouped bar chart
+                return self.grouped_bar(data, category, list(value), orientation=orientation, sort=sort, why=why)
+            value = value[0] if value else None
         frame = _frame(data, func)
         category = _column(frame, category if category is not None else frame.columns[0], func, "category")
         value = _column(frame, value if value is not None else frame.columns[-1], func, "value")
@@ -423,8 +580,6 @@ class Charts:
                 f"categories you need (for example the top {MAX_BARS}, if that suits your story), or use the table.")))
         frame = _sort(frame, category, value, sort, spec, func)
         labels = labels_of(frame[category])
-        if orientation not in ("auto", "horizontal", "vertical"):
-            raise ChartInputError("ceew.bar: `orientation` must be 'auto', 'horizontal' or 'vertical'.")
         if orientation == "auto":
             orientation = "vertical" if time else "horizontal"
         if orientation == "vertical" and not time and _long_labels(labels):
@@ -468,6 +623,7 @@ class Charts:
     def grouped_bar(self, data, category=None, values=None, orientation="auto", sort=None, why=""):
         """Grouped bars: two to four series (vertical) or two or three (horizontal) side by side."""
         func = "grouped_bar"
+        orientation = _orientation(orientation, func)
         frame = _frame(data, func)
         category = _column(frame, category if category is not None else frame.columns[0], func, "category")
         if values is None:
@@ -479,6 +635,10 @@ class Charts:
         spec = ChartSpec("grouped_bar", frame, why=str(why or ""))
         if len(values) == 1:
             return self.bar(frame, category, values[0], orientation=orientation, sort=sort, why=why)
+        if is_time(frame[category]) and (len(frame) > MAX_BARS or len(values) > 4):
+            spec.note(f"{len(frame)} time periods and {len(values)} series are too many for grouped bars, so this "
+                      "is a line chart with one line per series.", "fallback")
+            return self.line(frame, x=category, y=values, why=why, _spec=spec)
         if len(values) > 4:
             return self._emit(_table(frame, spec, f"Grouped bars hold two to four series; this table has "
                                      f"{len(values)}. Ask for fewer series, or for one chart per series."))
@@ -496,6 +656,8 @@ class Charts:
             if len(values) <= 3:
                 orientation = "horizontal"
                 spec.note("Category names are long, so the bars are horizontal.")
+            else:
+                labels = [_wrap_label(label) for label in labels]
         spec.data = frame
         spec.params = {"category": category, "values": values, "orientation": orientation, "labels": labels,
                        "value_axes": ("x_title",) if orientation == "horizontal" else ("y_title",)}
@@ -536,6 +698,7 @@ class Charts:
     def stacked_bar(self, data, category=None, parts=None, orientation="auto", why=""):
         """Proportional stacked bars: each bar is one whole, split into parts that add up to 100%."""
         func = "stacked_bar"
+        orientation = _orientation(orientation, func)
         frame = _frame(data, func)
         category = _column(frame, category if category is not None else frame.columns[0], func, "category")
         if parts is None:
@@ -608,12 +771,20 @@ class Charts:
         if 0.99 <= total <= 1.01 and (frame[value] >= 0).all():
             frame[value] = frame[value] * 100
             total *= 100
+        elif _are_counts(frame[value]) and not 99 <= total <= 101 and total > 0:
+            # Counts of one whole (households per income band): a pie shows them as shares of the total.
+            # Shares that add up to more than 100% are refused below; counts cannot show double counting,
+            # so the note asks the researcher to confirm each unit is counted once.
+            frame[value] = frame[value] / total * 100
+            total = 100.0
+            spec.note("The slices are shares of the total count. A pie is right only if each unit (a household, "
+                      "a person) is counted once (rule R1); with multiple answers per unit, ask for a bar chart.")
         problem = None
         if (frame[value] < 0).any():
             problem = "a pie chart cannot show negative values"
         elif not 99 <= total <= 101:
-            problem = (f"the parts add up to {total:,.0f}, not 100% (rule R1: parts of one whole only). If these "
-                       "are counts of one whole, ask for them as percentages")
+            problem = (f"the parts add up to {total:,.0f}%, not 100% (rule R1: parts of one whole only); shares "
+                       "that add up to more than 100% usually mean one unit was counted more than once")
         elif len(frame) > MAX_PIE_SLICES:
             problem = f"a pie chart holds at most {MAX_PIE_SLICES} slices; this has {len(frame)}"
         if problem:
@@ -802,9 +973,14 @@ class Charts:
         spec.note(f"n = {len(values):,} values. For survey data, give the sample size in the note.")
         return self._emit(spec)
 
-    def boxplot(self, data, group=None, value=None, why=""):
-        """Boxplot of a numeric column, one box per group. For specialist readers only."""
+    def boxplot(self, data, group=None, value=None, orientation="auto", why=""):
+        """Boxplot of a numeric column, one box per group. For specialist readers only.
+
+        orientation: 'vertical' (boxes standing up, groups along the bottom), 'horizontal', or 'auto'
+        (vertical unless the group names are long).
+        """
         func = "boxplot"
+        orientation = _orientation(orientation, func)
         frame = _frame(data, func)
         value = _column(frame, value if value is not None else frame.columns[-1], func, "value")
         _numeric(frame, [value], func)
@@ -827,8 +1003,12 @@ class Charts:
         summary = pd.DataFrame({"group": labels, "n": [len(b) for b in boxes],
                                 "median": [np.median(b) if len(b) else np.nan for b in boxes]})
         spec.data = summary
-        spec.params = {"boxes": boxes, "labels": labels, "value": value,
-                       "orientation": "horizontal" if _long_labels(labels, 14) else "vertical"}
+        if orientation == "auto":
+            orientation = "horizontal" if _long_labels(labels, 14) else "vertical"
+        # Standing boxes with long group names: the names go on several lines, never at an angle.
+        tick_labels = [_wrap_label(label) for label in labels] if orientation == "vertical" else labels
+        spec.params = {"boxes": boxes, "labels": labels, "tick_labels": tick_labels, "value": value,
+                       "orientation": orientation}
         spec.params["value_axes"] = ("x_title",) if spec.params["orientation"] == "horizontal" else ("y_title",)
         if spec.params["orientation"] == "horizontal":
             spec.x_title = str(value)
@@ -848,11 +1028,14 @@ class Charts:
         x = _column(frame, x if x is not None else frame.columns[0], func, "x")
         y = _column(frame, y if y is not None else frame.columns[1], func, "y")
         _numeric(frame, [x, y], func)
-        cols = [x, y] + ([colour] if colour is not None else [])
-        if colour is not None:
-            _column(frame, colour, func, "colour")
-        frame = frame[list(dict.fromkeys(cols))].dropna(subset=[x, y]).copy()
         spec = ChartSpec("scatter", frame, why=str(why or ""))
+        if colour is not None and colour not in frame.columns:
+            # color='red' and the like: the chart rules choose colours.
+            spec.note("Not used: colour. The chart rules choose the colours; colour= can only name a column.")
+            colour = None
+        cols = [x, y] + ([colour] if colour is not None else [])
+        frame = frame[list(dict.fromkeys(cols))].dropna(subset=[x, y]).copy()
+        spec.data = frame
         mode = None
         if colour is not None:
             if pd.api.types.is_numeric_dtype(frame[colour]) and frame[colour].nunique() > MAX_COLOURED:
@@ -890,6 +1073,9 @@ class Charts:
 
 CHART_FUNCTIONS = ("bar", "lollipop", "grouped_bar", "diverging_bar", "stacked_bar", "pie", "donut", "line",
                    "area", "slope", "range_plot", "histogram", "boxplot", "scatter", "heatmap")
+
+for _name in CHART_FUNCTIONS:
+    setattr(Charts, _name, _flexible(getattr(Charts, _name)))
 
 
 def _break_gaps(frame, x):
@@ -1483,7 +1669,7 @@ def _draw_boxplot(ax, spec, style, font_size):
     if horizontal:
         ax.set_yticks(positions, p["labels"])
     else:
-        ax.set_xticks(positions, p["labels"])
+        ax.set_xticks(positions, p.get("tick_labels") or p["labels"])
     _category_axis(ax, horizontal)
     return [], None
 

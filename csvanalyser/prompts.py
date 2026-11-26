@@ -22,7 +22,9 @@ CHART_RULES = "\n".join([
     "- CHARTS: draw every chart with the `ceew` chart functions (already available; do not import them). They apply "
     "the CEEW house style and check the chart rules against the data. Pass the table you plotted: one row per category "
     "or time point, already aggregated (except ceew.histogram, ceew.boxplot and ceew.scatter, which take one row per "
-    "observation). Arguments name columns of that table. Set `result` to the table you plotted.",
+    "observation). Arguments name columns of that table. Set `result` to the table you plotted; for "
+    "ceew.histogram, ceew.boxplot and ceew.scatter, set it to a short summary instead (for example "
+    "`.describe()` for each group), not the raw rows.",
     "  ceew.bar(data, category, value, orientation='auto', sort=None, highlight=None, why='')  # ranking, magnitude, a few time periods",
     "  ceew.lollipop(data, category, value, sort=None, highlight=None, why='')",
     "  ceew.grouped_bar(data, category, values=[...2 to 4 columns], orientation='auto', sort=None, why='')",
@@ -33,11 +35,13 @@ CHART_RULES = "\n".join([
     "  ceew.area(data, x, y, why='')  # one series, or stacked series that are parts of one whole",
     "  ceew.slope(data, category, start, end, why='') / ceew.range_plot(data, category, start, end, sort=None, why='')  # change between two values",
     "  ceew.histogram(data, value, bin_width=None, why='')  # distribution; pass bin_width only if the question gives one",
-    "  ceew.boxplot(data, group, value, why='')  # distribution, for specialist readers",
+    "  ceew.boxplot(data, group, value, orientation='auto', why='')  # distribution, for specialist readers; "
+    "orientation='vertical' or 'horizontal' when the question asks for one",
     "  ceew.scatter(data, x, y, colour=None, why='')  # correlation of two numeric columns",
     "  ceew.heatmap(data, row, column, value, why='')  # two categorical columns and one value",
     "  sort: None (largest first), 'descending', 'ascending', 'alphabetical' or 'data' (keep the table's order); "
     "only pass it if the question asks for an order. Time periods always stay in time order.",
+    "  Pass arguments by these names only; do not pass title, xlabel, color, figsize or other plotting options.",
     "- Choose the chart from what the question compares (ranking, magnitude, change over time, part-to-whole, "
     "distribution, correlation, deviation). Prefer the simplest chart that shows it. A chart named in the question is a "
     "proposal: use it only if it fits; otherwise use the chart that fits.",
@@ -94,6 +98,10 @@ def build_prompt(schema: str, question: str, context: str, past_turns=(), failur
         "Only these Streamlit functions are available: " + ", ".join(f"st.{name}" for name in sorted(ALLOWED_ST_CALLS)) + ". "
         "Do not use layout functions such as st.columns, st.expander, st.tabs or st.sidebar.",
         CHART_RULES,
+        "- Timestamps held as text (type str or object) must go through `pd.to_datetime` before use. "
+        "'By hour', 'by month' or 'by weekday' means the hour of the day (0 to 23), the month of the year (1 to 12) "
+        "or the day of the week, pooled over the whole period (for example `df.groupby(times.dt.hour)`), unless "
+        "the question asks for each day or each month of each year. Name such a column 'hour', 'month' or 'weekday'.",
         "- If you use `.agg()`, NEVER use the string '50%'. Use 'median' instead.",
         "- To reset the index of a dataframe, use `.reset_index()`. NEVER use `.reset()`.",
         "- PUT ALL YOUR CODE IN ONE SINGLE ```python ... ``` BLOCK. Do not write any explanations outside the code block.",

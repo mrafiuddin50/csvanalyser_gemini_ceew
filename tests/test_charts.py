@@ -106,6 +106,16 @@ def test_pie_only_for_up_to_five_parts_that_make_one_whole():
     assert six.kind == "bar" and "at most 5" in notes(six, "fallback")
 
 
+def test_pie_of_counts_shows_shares_of_the_whole():
+    # Seen from gemini-3.5-flash-lite: households per income band passed as counts.
+    counts = pd.DataFrame({"income_band": ["Low", "Middle", "High"], "household_count": [270, 240, 90]})
+    spec = draw("pie", counts, "income_band", "household_count")
+    assert spec.kind == "pie" and spec.data["household_count"].round(1).tolist() == [45.0, 40.0, 15.0]
+    assert "counted once" in notes(spec)
+    shares = pd.DataFrame({"answer": list("ABC"), "share": [60.0, 50.0, 30.0]})       # named as shares: refused
+    assert draw("pie", shares, "answer", "share").kind == "bar"
+
+
 def test_stacked_bars_that_do_not_add_up_become_grouped_bars():
     data = pd.DataFrame({"state": ["A", "B"], "lpg": [70.0, 60], "wood": [50.0, 40]})
     spec = draw("stacked_bar", data, "state", ["lpg", "wood"])
@@ -137,6 +147,89 @@ def test_histogram_states_automatic_bins_and_uses_given_ones():
     given = draw("histogram", values, "income", bin_width=5)
     assert np.allclose(np.diff(given.data["bin_start"]), 5) and given.data["count"].sum() == 300
     assert "chosen automatically" not in notes(given)
+
+
+# --- Questions that broke: hour of day, vertical box plots, Gemini's own argument names ---------
+
+HOURLY = pd.DataFrame({
+    "observation_hour_start": pd.date_range("2024-01-01", periods=24 * 60, freq="h").strftime("%Y-%m-%d %H:%M:%S"),
+    "location_name": np.tile(["Central School, Lucknow - CPCB", "Talkatora District Industries Center, Lucknow - CPCB"],
+                             24 * 30),
+    "average_value_in_hour": np.random.default_rng(3).gamma(4, 40, 24 * 60),
+})
+
+
+def test_hour_of_day_is_time_and_24_hours_become_a_line():
+    times = pd.to_datetime(HOURLY["observation_hour_start"])
+    by_hour = HOURLY.groupby(times.dt.hour)["average_value_in_hour"].mean().reset_index()
+    assert charts.is_time(by_hour["observation_hour_start"])          # .dt.hour keeps the column's name
+    spec = draw("bar", by_hour, "observation_hour_start", "average_value_in_hour")
+    assert spec.kind == "line" and len(spec.data) == 24 and "line chart" in notes(spec, "fallback")
+    assert spec.data["observation_hour_start"].tolist() == list(range(24))
+    assert charts.is_time(pd.Series([1, 12], name="month")) and charts.is_time(pd.Series([0, 6], name="weekday"))
+    assert not charts.is_time(pd.Series([0, 99], name="hour")) and not charts.is_time(pd.Series([3, 4], name="count"))
+
+
+def test_hours_by_station_become_one_line_per_station():
+    wide = pd.DataFrame({"hour": range(24), "a": np.arange(24.0), "b": np.arange(24.0) + 1})
+    spec = draw("grouped_bar", wide, "hour", ["a", "b"])
+    assert spec.kind == "line" and spec.params["ys"] == ["a", "b"]
+
+
+def test_vertical_box_plot_wraps_long_names_instead_of_turning():
+    spec = draw("boxplot", HOURLY, "location_name", "average_value_in_hour", orientation="vertical")
+    assert spec.params["orientation"] == "vertical" and spec.y_title == "average_value_in_hour"
+    assert all(max(len(line) for line in label.split("\n")) <= 14 for label in spec.params["tick_labels"])
+    assert spec.params["labels"][0] == "Central School, Lucknow - CPCB"           # the data keeps the full name
+    assert draw("boxplot", HOURLY, "location_name", "average_value_in_hour", vert=False).params["orientation"] \
+        == "horizontal"
+    assert render(spec, Style(), dpi=60)[:4] == b"\x89PNG"
+
+
+@pytest.mark.parametrize("call", [
+    lambda c: c.bar(STATES, x="state", y="capacity_mw"),
+    lambda c: c.bar(STATES, "state", "capacity_mw", title="Capacity", color="red", figsize=(8, 4)),
+    lambda c: c.boxplot(HOURLY, by="location_name", column="average_value_in_hour"),
+    lambda c: c.boxplot(HOURLY, x="location_name", y="average_value_in_hour", vert=True),
+    lambda c: c.scatter(HOURLY.assign(v=1.0), "v", "average_value_in_hour", color="red"),
+    lambda c: c.line(STATES.assign(year=range(2000, 2005)), x="year", y="capacity_mw", xlabel="Year"),
+    lambda c: c.box_plot(HOURLY, "location_name", "average_value_in_hour"),
+    lambda c: c.column_chart(STATES, "state", "capacity_mw"),
+    lambda c: c.bar(STATES.assign(b=1.0), "state", ["capacity_mw", "b"]),
+])
+def test_geminis_own_argument_names_still_draw_a_chart(call):
+    specs = []
+    call(Charts(specs.append))
+    assert len(specs) == 1 and specs[0].kind != "table"
+
+
+@pytest.mark.parametrize("code", [
+    # Seen from gemini-3.5-flash-lite: the chart function treated like matplotlib.
+    "fig = ceew.boxplot(df, 'location_name', 'average_value_in_hour', orientation='vertical')\nst.pyplot(fig)\n"
+    "result = 1",
+    "ax = ceew.bar(t, 'location_name', 'average_value_in_hour')\nax.set_title('PM2.5')\nax.set_xlabel('x')\n"
+    "st.pyplot()\nresult = t",
+    "fig, ax = ceew.bar(t, 'location_name', 'average_value_in_hour')\nst.write(fig)\nresult = ceew.line(t)",
+])
+def test_matplotlib_habits_around_chart_functions_do_no_harm(code):
+    setup = "t = df.groupby('location_name', as_index=False)['average_value_in_hour'].mean()\n"
+    result, outputs = run_generated_code(setup + code, HOURLY, {})
+    assert [name for name, _, _ in outputs if name != "chart"] == []           # no stray images or text
+    assert any(name == "chart" for name, _, _ in outputs)
+    assert not isinstance(result, charts.ChartHandle)
+
+
+def test_unused_arguments_are_named_in_a_note():
+    spec = draw("bar", STATES, "state", "capacity_mw", title="Capacity", color="red")
+    assert "Not used: title, color" in notes(spec)
+    assert draw("column_chart", STATES, "state", "capacity_mw").params["orientation"] == "vertical"
+    assert "Not used" not in notes(draw("bar", STATES, "state", "capacity_mw"))
+
+
+def test_prompt_explains_hour_of_day_and_box_plot_orientation():
+    prompt = build_prompt(describe_schema(HOURLY), "average PM2.5 by hour", "")
+    assert "hour of the day (0 to 23)" in prompt and "pd.to_datetime" in prompt
+    assert "ceew.boxplot(data, group, value, orientation='auto'" in prompt
 
 
 # --- Drawing -----------------------------------------------------------------------------------

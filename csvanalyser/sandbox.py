@@ -8,7 +8,7 @@ import urllib.request
 import numpy as np
 import pandas as pd
 
-from .charts import Charts, ChartSpec, Style, house_rc
+from .charts import ChartHandle, Charts, ChartSpec, Style, house_rc
 from .privacy import GENERATED_FILENAME, restore_names
 
 
@@ -89,9 +89,17 @@ class OutputRecorder:
     def _record(self, name, args, kwargs):
         import matplotlib.pyplot as plt
         if name == "pyplot":
-            fig = args[0] if args else kwargs.get("fig") or plt.gcf()
+            fig = args[0] if args else kwargs.get("fig")
+            if not _is_figure(fig):
+                # st.pyplot() with no figure, or with what a ceew chart function returned (the app already has
+                # that chart): show the current matplotlib figure if there is one, otherwise nothing.
+                if isinstance(fig, ChartHandle) or not plt.get_fignums():
+                    return None
+                fig = plt.gcf()
             self.outputs.append(("image", (_figure_to_png(fig),), {}))
             return None
+        if args and all(isinstance(a, ChartHandle) for a in args):
+            return None              # st.write(ceew.bar(...)): the chart is already on its way to the page
         figures = [a for a in args if _is_figure(a)]
         if figures:
             for fig in figures:
@@ -211,6 +219,8 @@ def run_generated_code(code: str, df: pd.DataFrame, reverse_aliases: dict, style
         raise NoResultError("The code ran but did not define a variable named `result`.")
 
     result = namespace["result"]
+    if isinstance(result, ChartHandle):
+        result = None                # result = ceew.bar(...): the chart is shown; there is no table
     if _is_figure(result):
         recorder.outputs.append(("image", (_figure_to_png(result),), {}))
         result = None
