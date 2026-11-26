@@ -6,8 +6,8 @@ checks that need the data (do the parts add up to 100%? are there gaps in a time
 categories?) run here, and their messages are shown to the researcher only. Nothing in this file is
 sent to Gemini.
 
-The researcher owns the words: charts carry placeholders for the headline, source and note until
-the researcher types them in.
+The researcher owns the words: a chart has a headline, source or note only once the researcher has
+typed it in; nothing is drawn, and no space is kept, for one left empty.
 
 This file imports only pandas, numpy and matplotlib, so it can also be saved next to an exported
 notebook and used there (see notebook_charts).
@@ -204,10 +204,9 @@ ASK_HIGHLIGHT_ABOVE = 10  # more categories than this: offer the grey-out option
 MAX_PIE_SLICES = 5
 MAX_SLOPE_CATEGORIES = 4
 
+# Shown on a value axis that has no title yet (the unit belongs there). The headline, source and note are drawn
+# only once the researcher writes them; until then the chart has no space reserved for them.
 PLACEHOLDERS = {
-    "headline": "[Your headline here]",
-    "source": "[Source: ...]",
-    "note": "[Note: ...]",
     "axis": "[Axis title, with unit]",
 }
 
@@ -1302,11 +1301,10 @@ def _prefixed(text, word):
     return text if text.lower().startswith(word.lower()) else f"{word}: {text}"
 
 
-def footer_lines(spec, texts):
-    source = _prefixed(texts.get("source"), "Source") or PLACEHOLDERS["source"]
-    note_default = "[How to read this chart: ...] [Note: ...]" if spec.kind == "boxplot" else PLACEHOLDERS["note"]
-    note = _prefixed(texts.get("note"), "Note") or note_default
-    return source, note
+def footer_lines(spec, texts) -> list:
+    """The source and note lines the researcher wrote, in that order; nothing for a line left empty."""
+    lines = [_prefixed(texts.get("source"), "Source"), _prefixed(texts.get("note"), "Note")]
+    return [line for line in lines if line]
 
 
 def axis_titles(spec, texts):
@@ -1346,12 +1344,12 @@ def render(spec: ChartSpec, style: Style | None = None, texts: dict | None = Non
             ax.set_xlabel(titles["x_title"])
             ax.set_ylabel(titles["y_title"])
 
-        headline = (texts.get("headline") or "").strip() or PLACEHOLDERS["headline"]
-        head_lines = _wrap(headline, width - 2 * margin, font_size)
-        source, note = footer_lines(spec, texts)
-        foot_lines = _wrap(source, width - 2 * margin, font_size) + _wrap(note, width - 2 * margin, font_size)
-        head_h = len(head_lines) * line_h
-        foot_h = len(foot_lines) * line_h
+        # The headline, source and note appear only when the researcher has written them.
+        headline = (texts.get("headline") or "").strip()
+        head_lines = _wrap(headline, width - 2 * margin, font_size) if headline else []
+        foot_lines = [line for text in footer_lines(spec, texts) for line in _wrap(text, width - 2 * margin, font_size)]
+        head_h = len(head_lines) * line_h + (gap * 1.5 if head_lines else 0)
+        foot_h = len(foot_lines) * line_h + (gap if foot_lines else 0)
 
         renderer = canvas.get_renderer()
         legend = None
@@ -1360,18 +1358,22 @@ def render(spec: ChartSpec, style: Style | None = None, texts: dict | None = Non
             legend, legend_h = _legend(fig, legend_items, width - 2 * margin, font_size, renderer)
 
         if total_h is None:
-            total_h = margin + head_h + gap * 1.5 + plot_h + (legend_h + gap if legend else 0) + gap + foot_h + margin
+            total_h = margin + head_h + plot_h + (legend_h + gap if legend else 0) + foot_h + margin
             fig.set_size_inches(width, total_h)
             renderer = canvas.get_renderer()
 
-        fig.text(margin / width, 1 - margin / total_h, "\n".join(head_lines), ha="left", va="top",
-                 fontweight="semibold", linespacing=1.25)
-        fig.text(margin / width, margin / total_h, "\n".join(foot_lines), ha="left", va="bottom", linespacing=1.25)
-        bottom = margin + foot_h + gap
+        if head_lines:
+            fig.text(margin / width, 1 - margin / total_h, "\n".join(head_lines), ha="left", va="top",
+                     fontweight="semibold", linespacing=1.25)
+        if foot_lines:
+            fig.text(margin / width, margin / total_h, "\n".join(foot_lines), ha="left", va="bottom",
+                     linespacing=1.25)
+        bottom = margin + foot_h
         if legend is not None:
+            bottom += gap * 0.5 if not foot_lines else 0
             legend.set_bbox_to_anchor((margin / width, bottom / total_h), transform=fig.transFigure)
             bottom += legend_h + gap
-        top = total_h - margin - head_h - gap * 1.5
+        top = total_h - margin - head_h
         zone = (margin / width, bottom / total_h, 1 - margin / width, top / total_h)
         _fit(fig, ax, zone, renderer)
         if direct:

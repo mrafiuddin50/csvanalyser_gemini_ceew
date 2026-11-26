@@ -46,8 +46,8 @@ the work is split:
   up to 100% for pie and stacked 100% charts, bars start at zero and hold at most 15 categories, lines break at
   gaps, more than eight categories turn grey, highlights only when the question names them. These messages are
   shown to the researcher and never sent to Gemini.
-- **The researcher** writes the headline, source and note under each chart; until then the chart shows
-  placeholders. The headline is checked locally for words that claim a cause or a record; it is never rewritten
+- **The researcher** writes the headline, source and note under each chart; each appears on the chart only once it
+  has been entered, and no space is kept for it until then. The headline is checked locally for words that claim a cause or a record; it is never rewritten
   and never sent to Gemini (a headline states findings from the data).
 
 The sidebar's *4 · Chart style* sets the use (research report, presentation, outreach) and the colour pair.

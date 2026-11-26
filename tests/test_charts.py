@@ -334,16 +334,24 @@ def test_every_chart_kind_renders_in_every_use():
             assert render(spec, Style(use=use), dpi=60)[:8] == b"\x89PNG\r\n\x1a\n", (spec.kind, use)
 
 
-def test_placeholders_until_the_researcher_writes_the_words():
+def test_headline_source_and_note_appear_only_once_written():
+    from PIL import Image
+    import io
     spec = draw("bar", STATES, "state", "capacity_mw")
     svg = render(spec, Style(), fmt="svg").decode()
-    for placeholder in ("[Your headline here]", "[Source: ...]", "[Note: ...]"):
-        assert placeholder in svg
+    for absent in ("headline", "Source", "Note", "[", "..."):
+        assert absent not in svg.split("</metadata>")[-1].replace("[Axis", ""), absent   # no placeholders at all
     assert "Familjen Grotesk" in svg                                 # editable text in the CEEW font
     texts = {"headline": "State B leads", "source": "CEA", "note": "Provisional figures", "x_title": "Capacity (MW)"}
     svg = render(spec, Style(), texts, fmt="svg").decode()
     assert "State B leads" in svg and "Source: CEA" in svg and "Note: Provisional figures" in svg
-    assert "Capacity (MW)" in svg and "[Your headline here]" not in svg
+    assert "Capacity (MW)" in svg
+    only_source = render(spec, Style(), {"source": "CEA"}, fmt="svg").decode()
+    assert "Source: CEA" in only_source and "Note:" not in only_source
+    # No space is kept for words that are not there: the bare chart is shorter than the one with all three.
+    bare = Image.open(io.BytesIO(render(spec, Style(), dpi=50)))
+    worded = Image.open(io.BytesIO(render(spec, Style(), texts, dpi=50)))
+    assert bare.height < worded.height and bare.width == worded.width
 
 
 def test_outreach_is_1080_pixels_on_cream():
