@@ -114,6 +114,48 @@ def test_anonymise():
     assert_no_leak(prompts)
 
 
+def test_an_empty_answer_is_retried_without_data_values():
+    # Seen with real Gemini: filtering 'PM2.5' when the data writes 'PM25' left no rows.
+    empty = "t = df[df['site_name'].str.contains('Delhi Central')]\nresult = t.groupby('site_name')['pm25'].mean()"
+    fixed = "result = df.groupby('site_name')['pm25'].mean()"
+    llm, prompts = fake_llm([empty, fixed])
+    turn = analysis.analyse("mean pm25 at Delhi Central", make_df(), "", [], False, llm)
+    assert turn["attempts"] == 2 and turn["error"] is None and len(turn["result"]) == 3
+    assert "EmptyResult" in prompts[1] and "compare text loosely" in prompts[1]
+    # Seen with real Gemini: asked for summer when the data had none, it swapped in all months.
+    assert "never replace the period, place or item asked about" in prompts[1]
+    assert_no_leak(prompts)
+
+
+def test_an_answer_that_stays_empty_is_kept_not_turned_into_an_error():
+    empty = "result = df[df['pm25'] > 10000]"
+    llm, prompts = fake_llm([empty, empty])
+    turn = analysis.analyse("readings above 10000", make_df(), "", [], False, llm)
+    assert turn["error"] is None and len(turn["result"]) == 0 and turn["code"] == empty
+    assert len(prompts) == 2                                     # one retry for an empty answer, not two
+    llm, prompts = fake_llm([empty, "raise ValueError('x')", "raise ValueError('x')"])
+    turn = analysis.analyse("readings above 10000", make_df(), "", [], False, llm)
+    assert turn["error"] is None and turn["code"] == empty       # a later crash does not replace the empty answer
+
+
+def test_an_empty_answer_that_explains_itself_is_not_retried():
+    # Seen with real Gemini: asked again, it showed all months in place of the summer that was not in the data.
+    code = "st.info('There are no readings for April to June.')\nresult = df[df['pm25'] > 10000]"
+    llm, prompts = fake_llm([code, "result = df"])
+    turn = analysis.analyse("mean pm25 in summer", make_df(), "", [], False, llm)
+    assert len(prompts) == 1 and len(turn["result"]) == 0 and turn["error"] is None
+    assert "Never show a different period or item, or all the data, in its place" in prompts[0]
+
+
+def test_empty_charts_count_as_empty_answers():
+    llm, prompts = fake_llm(["ceew.bar(df[df['pm25'] < 0].groupby('site_name', as_index=False)['pm25'].mean(), "
+                             "'site_name', 'pm25')\nresult = 1",
+                             "result = ceew.bar(df.groupby('site_name', as_index=False)['pm25'].mean(), 'site_name', "
+                             "'pm25')"])
+    turn = analysis.analyse("bar of pm25 by site", make_df(), "", [], False, llm)
+    assert turn["attempts"] == 2 and list(turn["result"].columns) == ["site_name", "pm25"]   # the plotted table
+
+
 def test_follow_up_sends_code_not_results():
     llm, prompts = fake_llm(["result = df[df['pm25'] > 200]"])
     first = analysis.analyse("sites above 200", make_df(), "", [], False, llm)

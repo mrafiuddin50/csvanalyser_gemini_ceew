@@ -64,6 +64,7 @@ def analyse(question: str, df: pd.DataFrame, context: str, history: list, anonym
     }
 
     failure = None
+    empty = None              # an answer that ran but found no rows, kept in case no later attempt does better
     for attempt in range(1, MAX_ATTEMPTS + 1):
         prompt = build_prompt(request["schema"], request["question"], request["context"], past, failure)
         turn["sent_prompts"].append(prompt)
@@ -73,6 +74,8 @@ def analyse(question: str, df: pd.DataFrame, context: str, history: list, anonym
         try:
             code = llm(prompt)
         except Exception as exc:
+            if empty:
+                return _keep_empty(turn, empty)
             turn["error"] = f"Gemini request failed: {exc}"
             report("Gemini request failed.")
             return turn
@@ -87,9 +90,49 @@ def analyse(question: str, df: pd.DataFrame, context: str, history: list, anonym
             report(f"The code did not work ({type(exc).__name__})."
                    + (" Retrying…" if attempt < MAX_ATTEMPTS else " No attempts left."))
             continue
+        if is_empty_answer(result, outputs) and attempt < MAX_ATTEMPTS and empty is None:   # one retry at most
+            # Usually a text filter that matched nothing, because Gemini cannot see how values are written.
+            # The message names no data values; the empty answer is kept if no later attempt does better.
+            empty = (code, result, outputs)
+            failure = (code, EMPTY_ANSWER)
+            report("The code ran but found no rows. Asking Gemini to check its filters…")
+            continue
         turn["result"], turn["outputs"], turn["error"] = result, outputs, None
         report("Done.")
         return turn
+    return _keep_empty(turn, empty) if empty else turn
+
+
+EMPTY_ANSWER = (
+    "EmptyResult: the code ran, but its final table has no rows, so there is nothing to show. A text filter may have "
+    "matched nothing because the data writes the value differently (for example without spaces or punctuation): "
+    "compare text loosely (lowercase, spaces and punctuation removed, then difflib). Also remove any filter you added "
+    "that the question did not ask for. But keep every condition the question asks for: never replace the period, "
+    "place or item asked about with another one or with all the data. If that period or item is not in the data, "
+    "say so with st.info, draw no chart, and set `result` to the empty table."
+)
+
+
+EXPLAINED = ("info", "warning", "error", "write", "markdown", "text")
+
+
+def is_empty_answer(result, outputs) -> bool:
+    """True when the answer silently has no rows to show: an empty result table, or charts with nothing in them.
+
+    An empty answer that explains itself (st.info: 'no data for April to June') is a real answer, not retried:
+    asked again, Gemini tended to swap in other months to have something to show.
+    """
+    if any(name in EXPLAINED for name, _, _ in outputs):
+        return False
+    if isinstance(result, (pd.DataFrame, pd.Series)) and len(result) == 0:
+        return True
+    charts = [args[0] for name, args, _ in outputs if name == "chart"]
+    return bool(charts) and all(len(spec.data) == 0 for spec in charts)
+
+
+def _keep_empty(turn: dict, empty) -> dict:
+    turn["code"], turn["result"], turn["outputs"] = empty
+    turn["error"] = None
     return turn
 
 

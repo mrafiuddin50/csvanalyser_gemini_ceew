@@ -28,7 +28,8 @@ CHART_RULES = "\n".join([
     "  ceew.bar(data, category, value, orientation='auto', sort=None, highlight=None, why='')  # ranking, magnitude, a few time periods",
     "  ceew.lollipop(data, category, value, sort=None, highlight=None, why='')",
     "  ceew.grouped_bar(data, category, values=[...2 to 4 columns], orientation='auto', sort=None, why='')",
-    "  ceew.diverging_bar(data, category, value, reference='zero', sort=None, why='')  # deviation from zero, a target or an average",
+    "  ceew.diverging_bar(data, category, value, reference='zero', sort=None, why='')  # deviation from zero, a target "
+    "or an average; reference= names that point in words, for example 'the average of all stations'",
     "  ceew.stacked_bar(data, category, parts=[...], orientation='auto', why='')  # parts of one whole that add up to 100% in every row",
     "  ceew.pie(data, category, value, why='') / ceew.donut(...)  # at most 5 parts of one whole adding up to 100%",
     "  ceew.line(data, x, y, series=None, highlight=None, why='')  # change over time; y is one column or a list (wide), or use series= for long data",
@@ -38,9 +39,12 @@ CHART_RULES = "\n".join([
     "  ceew.boxplot(data, group, value, orientation='auto', why='')  # distribution, for specialist readers; "
     "orientation='vertical' or 'horizontal' when the question asks for one",
     "  ceew.scatter(data, x, y, colour=None, why='')  # correlation of two numeric columns",
-    "  ceew.heatmap(data, row, column, value, why='')  # two categorical columns and one value",
+    "  ceew.heatmap(data, row, column, value, why='')  # two categorical columns and one value; for a wide table of "
+    "numbers such as df.corr(), pass just the table: ceew.heatmap(matrix, why='')",
     "  sort: None (largest first), 'descending', 'ascending', 'alphabetical' or 'data' (keep the table's order); "
-    "only pass it if the question asks for an order. Time periods always stay in time order.",
+    "only pass it if the question asks for an order. Time periods always stay in time order. Categories with a "
+    "natural order (bands such as AQI categories, age groups or income bands) keep that order: put the rows in that "
+    "order and pass sort='data'.",
     "  Pass arguments by these names only; do not pass title, xlabel, color, figsize or other plotting options.",
     "- Choose the chart from what the question compares (ranking, magnitude, change over time, part-to-whole, "
     "distribution, correlation, deviation). Prefer the simplest chart that shows it. A chart named in the question is a "
@@ -90,10 +94,16 @@ def build_prompt(schema: str, question: str, context: str, past_turns=(), failur
         "RULES:",
         "- `df` is already loaded. Do not read any files. `pd`, `np`, `plt` and `st` are already available; do not import streamlit.",
         "- YOU MUST ASSIGN YOUR FINAL OUTPUT TO A VARIABLE NAMED `result` at the end of the script (e.g. `result = filtered_df`).",
-        "- When the question names a specific item (such as a place, site or category), find it in the relevant text column with "
-        "`df[col].astype(str).str.contains(name, case=False, na=False, regex=False)`. If nothing matches, fall back to "
-        "`import difflib; difflib.get_close_matches(name.lower(), [str(x).lower() for x in df[col].dropna().unique()], cutoff=0.3)`, "
-        "map the match back to the original value, and tell the user which value was used with `st.write`.",
+        "- When the question names a specific item (such as a place, site, pollutant or category), find it in the relevant "
+        "text column by comparing loosely, because the data may write it differently (for example 'PM2.5' as 'PM 2.5' or "
+        "'PM_2_5'): `import re; norm = lambda s: s.astype(str).str.lower().str.replace(r'[^a-z0-9]', '', regex=True)`, then "
+        "`mask = norm(df[col]).str.contains(re.sub(r'[^a-z0-9]', '', name.lower()), regex=False)`. If nothing matches, fall "
+        "back to `import difflib; difflib.get_close_matches(name.lower(), [str(x).lower() for x in df[col].dropna().unique()], "
+        "cutoff=0.3)`, map the match back to the original value, and tell the user which value was used with `st.write`. "
+        "Never let a filter silently leave no rows: if nothing is left, say so with `st.info`.",
+        "- If the period, place or item the question asks about is not in the data, say so with `st.info`, draw no "
+        "chart and set `result` to the empty table. Never show a different period or item, or all the data, in its "
+        "place.",
         "- To show extra tables or text alongside `result`, call `st.write`, `st.markdown`, `st.subheader` or `st.dataframe` directly. "
         "Only these Streamlit functions are available: " + ", ".join(f"st.{name}" for name in sorted(ALLOWED_ST_CALLS)) + ". "
         "Do not use layout functions such as st.columns, st.expander, st.tabs or st.sidebar.",

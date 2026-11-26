@@ -8,7 +8,7 @@ import pytest
 
 from csvanalyser import charts
 from csvanalyser.charts import (GREY_LIGHT, GREY_LIGHTEST, SHADES, ChartInputError, Charts, Style, categorical_colours,
-                                check_headline, file_stem, render)
+                                check_headline, file_stem, natural_order, render)
 from csvanalyser.export import build_notebook, charts_module_source, uses_ceew_charts
 from csvanalyser.prompts import build_prompt, describe_schema
 from csvanalyser.sandbox import run_generated_code
@@ -217,6 +217,80 @@ def test_matplotlib_habits_around_chart_functions_do_no_harm(code):
     assert [name for name, _, _ in outputs if name != "chart"] == []           # no stray images or text
     assert any(name == "chart" for name, _, _ in outputs)
     assert not isinstance(result, charts.ChartHandle)
+
+
+def test_dates_as_python_date_objects_or_text_are_real_dates():
+    # Seen from gemini-3.5-flash-lite: groupby(times.dt.date) gives date objects; each day became a label.
+    days = pd.date_range("2020-11-01", periods=92, freq="D")
+    daily = pd.DataFrame({"date": days.date, "pm25": np.arange(92.0)})
+    spec = draw("line", daily, "date", "pm25")
+    assert pd.api.types.is_datetime64_any_dtype(spec.data["date"]) and "evenly spaced" not in notes(spec)
+    months = pd.DataFrame({"month": ["2020-11", "2020-12", "2021-01"], "pm25": [1.0, 2, 3]})
+    assert pd.api.types.is_datetime64_any_dtype(draw("line", months, "month", "pm25").data["month"])
+    words = pd.DataFrame({"day": ["Monday", "Tuesday"], "pm25": [1.0, 2]})
+    assert draw("bar", words, "day", "pm25").data["day"].tolist() == ["Tuesday", "Monday"]   # still words
+    by_day = draw("bar", daily, "date", "pm25")                       # 92 days: a line, not a refused bar chart
+    assert by_day.kind == "line"
+
+
+def test_ordered_categories_keep_their_order():
+    aqi = pd.DataFrame({"category": pd.Categorical(["Good", "Moderate", "Severe"],
+                                                   categories=["Good", "Moderate", "Severe"], ordered=True),
+                        "share": [5.0, 60, 35]})
+    assert draw("bar", aqi, "category", "share").params["labels"] == ["Good", "Moderate", "Severe"]
+    # Seen from gemini-3.5-flash-lite: AQI bands as plain text, sorted by size (Very poor first).
+    text = pd.DataFrame({"band": ["Very poor", "Severe", "Poor", "Moderate", "Satisfactory", "Good"],
+                         "share": [51.0, 17, 15, 11, 5, 1]})
+    spec = draw("bar", text, "band", "share")
+    assert spec.params["labels"] == ["Good", "Satisfactory", "Moderate", "Poor", "Very poor", "Severe"]
+    assert "order of the categories" in notes(spec)
+    assert draw("bar", text, "band", "share", sort="descending").params["labels"][0] == "Very poor"
+    bins = pd.DataFrame({"pm25": ["61-90", "0-30", "(30, 60]", "121-250"], "hours": [3.0, 9, 1, 4]})
+    assert draw("bar", bins, "pm25", "hours").params["labels"] == ["0-30", "(30, 60]", "61-90", "121-250"]
+    assert natural_order(pd.Series(["Lucknow", "Delhi"])) is None
+
+
+def test_wide_heatmap_thins_hour_labels_and_turns_long_names():
+    hours = pd.DataFrame(np.arange(96.0).reshape(4, 24), index=[f"Long station name number {i}" for i in range(4)])
+    spec = draw("heatmap", hours)
+    from matplotlib.figure import Figure
+    for case, expect in ((spec, "thinned"), (draw("heatmap", pd.DataFrame(np.eye(5), columns=[
+            f"relative_humidity_{i}" for i in range(5)], index=list("abcde"))), "turned")):
+        png = render(case, Style(), dpi=40)
+        assert png[:4] == b"\x89PNG", expect
+
+
+def test_heatmap_takes_a_correlation_matrix():
+    # Seen from gemini-3.5-flash-lite: a correlation heatmap drawn with plain matplotlib, because
+    # ceew.heatmap only took long tables.
+    numbers = pd.DataFrame({"a": [1.0, 2, 3, 4], "b": [2.0, 1, 4, 3], "c": [4.0, 3, 2, 1]})
+    spec = draw("heatmap", numbers.corr())
+    assert spec.kind == "heatmap" and spec.params["grid"].shape == (3, 3)
+    assert spec.params["row_labels"] == ["a", "b", "c"]
+    named = numbers.corr().rename_axis("variable").reset_index()            # labels in a column, not the index
+    assert draw("heatmap", named).params["grid"].shape == (3, 3)
+    long = pd.DataFrame({"station": ["A", "A", "B", "B"], "hour": [0, 1, 0, 1], "pm25": [1.0, 2, 3, 4]})
+    assert draw("heatmap", long).params["grid"].shape == (2, 2)            # long tables still work
+
+
+def test_empty_figures_after_a_ceew_chart_are_not_shown():
+    code = ("ceew.scatter(df, 'average_value_in_hour', 'average_value_in_hour')\nst.pyplot(plt.gcf())\n"
+            "fig, ax = plt.subplots()\nresult = 1")
+    _, outputs = run_generated_code(code, HOURLY, {})
+    assert [name for name, _, _ in outputs] == ["chart"]
+
+
+@pytest.mark.parametrize("code", [
+    "fig, ax = plt.subplots()\nax.plot([1, 2])\nax2 = ax.twinx()\nresult = 1",
+    "df.assign(v=df['average_value_in_hour'], w=1.0)[['v', 'w']].plot(secondary_y='w')\nresult = 1",
+])
+def test_two_y_axes_are_refused_even_with_plain_matplotlib(code):
+    # Seen from gemini-3.5-flash-lite: asked for a second y-axis, it drew one with ax.twinx().
+    from csvanalyser.sandbox import ChartRuleError
+    with pytest.raises(ChartRuleError, match="R4"):
+        run_generated_code(code, HOURLY, {})
+    from matplotlib.axes import Axes
+    assert Axes.twinx.__name__ == "twinx"                                  # put back after the run
 
 
 def test_unused_arguments_are_named_in_a_note():

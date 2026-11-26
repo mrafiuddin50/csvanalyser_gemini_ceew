@@ -69,6 +69,11 @@ def _is_figure(obj) -> bool:
     return isinstance(obj, Figure)
 
 
+def _has_content(fig) -> bool:
+    """A figure with something drawn on it. st.pyplot(plt.gcf()) after a ceew chart makes an empty one."""
+    return any(ax.has_data() or ax.images or ax.texts or ax.patches for ax in fig.axes)
+
+
 class OutputRecorder:
     """Stands in for `st` inside generated code and records each display call."""
 
@@ -96,14 +101,18 @@ class OutputRecorder:
                 if isinstance(fig, ChartHandle) or not plt.get_fignums():
                     return None
                 fig = plt.gcf()
-            self.outputs.append(("image", (_figure_to_png(fig),), {}))
+            if _has_content(fig):
+                self.outputs.append(("image", (_figure_to_png(fig),), {}))
+            else:
+                plt.close(fig)
             return None
         if args and all(isinstance(a, ChartHandle) for a in args):
             return None              # st.write(ceew.bar(...)): the chart is already on its way to the page
         figures = [a for a in args if _is_figure(a)]
         if figures:
             for fig in figures:
-                self.outputs.append(("image", (_figure_to_png(fig),), {}))
+                if _has_content(fig):
+                    self.outputs.append(("image", (_figure_to_png(fig),), {}))
             return None
         args = tuple(restore_names(a, self._reverse) for a in args)
         kwargs = {k: restore_names(v, self._reverse) for k, v in kwargs.items()}
@@ -130,6 +139,33 @@ class OutputRecorder:
 
 class NetworkBlockedError(PermissionError):
     pass
+
+
+class ChartRuleError(RuntimeError):
+    """A chart the CEEW chart rules do not allow, drawn with plain matplotlib."""
+
+
+SECOND_AXIS_MESSAGE = ("Charts with two y-axes are not allowed (CEEW chart rule R4: the reader cannot compare two "
+                       "scales). Draw two separate charts instead, for example two ceew.line calls.")
+
+
+@contextlib.contextmanager
+def chart_rules_enforced():
+    """Blocks second axes (twinx and friends) while generated code runs; ceew charts never make them."""
+    from matplotlib.axes import Axes
+
+    def _refused(*args, **kwargs):
+        raise ChartRuleError(SECOND_AXIS_MESSAGE)
+
+    names = ("twinx", "twiny", "secondary_xaxis", "secondary_yaxis")
+    saved = [(name, getattr(Axes, name)) for name in names if hasattr(Axes, name)]
+    try:
+        for name, _ in saved:
+            setattr(Axes, name, _refused)
+        yield
+    finally:
+        for name, original in saved:
+            setattr(Axes, name, original)
 
 
 @contextlib.contextmanager
@@ -204,11 +240,13 @@ def run_generated_code(code: str, df: pd.DataFrame, reverse_aliases: dict, style
     printed = io.StringIO()
     try:
         compiled = compile(code, GENERATED_FILENAME, "exec")
-        with matplotlib.rc_context(house_rc(style)), contextlib.redirect_stdout(printed), network_blocked():
+        with matplotlib.rc_context(house_rc(style)), contextlib.redirect_stdout(printed), network_blocked(), \
+                chart_rules_enforced():
             exec(compiled, namespace)
             # Figures the code drew but never passed to st.pyplot.
             for number in plt.get_fignums():
-                recorder.outputs.append(("image", (_figure_to_png(plt.figure(number)),), {}))
+                if _has_content(plt.figure(number)):
+                    recorder.outputs.append(("image", (_figure_to_png(plt.figure(number)),), {}))
     finally:
         plt.close("all")
 
@@ -220,7 +258,7 @@ def run_generated_code(code: str, df: pd.DataFrame, reverse_aliases: dict, style
 
     result = namespace["result"]
     if isinstance(result, ChartHandle):
-        result = None                # result = ceew.bar(...): the chart is shown; there is no table
+        result = result.data         # result = ceew.bar(...): the answer's table is the one the chart shows
     if _is_figure(result):
         recorder.outputs.append(("image", (_figure_to_png(result),), {}))
         result = None

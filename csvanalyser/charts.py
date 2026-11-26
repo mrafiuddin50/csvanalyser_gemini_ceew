@@ -321,6 +321,55 @@ def _as_time(series: pd.Series) -> pd.Series:
     return series
 
 
+def as_dates(series: pd.Series) -> pd.Series:
+    """Dates held as Python date objects or text ('2020-11-05', '2020-11') become real dates.
+
+    Generated code often groups by df[col].dt.date, which gives plain date objects; a chart would treat each
+    day as a separate label. Text that is mostly not dates (station names, 'Monday') is left alone.
+    """
+    series = _as_time(series)
+    if not (pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series)):
+        return series
+    values = series.dropna()
+    if len(values) == 0 or not values.map(lambda v: hasattr(v, "year") or isinstance(v, str)).all():
+        return series
+    if values.map(lambda v: isinstance(v, str) and not any(ch.isdigit() for ch in v)).any():
+        return series                                            # words, not dates
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        parsed = pd.to_datetime(series, errors="coerce")
+    return parsed if parsed[series.notna()].notna().mean() >= 0.95 else series
+
+
+def _is_ordered(series: pd.Series) -> bool:
+    """Ordered categories (for example from pd.cut): Good, Satisfactory, Moderate ... keep their order."""
+    return isinstance(series.dtype, pd.CategoricalDtype) and bool(series.dtype.ordered)
+
+
+# Scales whose order is part of their meaning. A chart keeps them in this order rather than by size.
+ORDERED_SCALES = [
+    ["good", "satisfactory", "moderate", "poor", "very poor", "severe"],                 # India's AQI categories
+    ["very low", "low", "lower middle", "middle", "medium", "moderate", "upper middle", "high", "very high"],
+    ["strongly disagree", "disagree", "neutral", "neither agree nor disagree", "agree", "strongly agree"],
+    ["never", "rarely", "sometimes", "often", "always"],
+    ["very poor", "poor", "fair", "good", "very good", "excellent"],
+]
+_LEADING_NUMBER = re.compile(r"^\W*(-?\d+(?:\.\d+)?)")
+
+
+def natural_order(series: pd.Series):
+    """Sort keys when the labels have an order of their own: number bands ('0-30', '(30, 60]') or a known scale."""
+    labels = [str(v).strip().lower() for v in series]
+    numbers = [_LEADING_NUMBER.match(label) for label in labels]
+    if labels and all(numbers):
+        return [float(m.group(1)) for m in numbers]
+    for scale in ORDERED_SCALES:
+        if len(labels) >= 2 and all(label in scale for label in labels):
+            return [scale.index(label) for label in labels]
+    return None
+
+
 def labels_of(series: pd.Series) -> list:
     """Category labels as text. Dates are written as plainly as the data allows."""
     series = _as_time(series)
@@ -348,6 +397,12 @@ def _sort(frame, category, value, sort, spec, func):
         if sort not in (None, "data", "ascending"):
             spec.note("Time periods are kept in time order (the chart rules say time order always wins).")
         return frame.sort_values(category, kind="stable")
+    if _is_ordered(frame[category]) and sort in (None, "data"):
+        return frame.sort_values(category, kind="stable")       # ordered categories keep their own order
+    order = natural_order(frame[category]) if sort is None else None
+    if order is not None:
+        spec.note("Kept in the order of the categories themselves. To sort by size instead, say so in your question.")
+        return frame.assign(_order=order).sort_values("_order", kind="stable").drop(columns="_order")
     if sort is None:
         spec.note("Sorted from largest to smallest. For another order, say so in your question "
                   "(ascending, alphabetical, or the order in your data).")
@@ -506,8 +561,9 @@ class ChartHandle:
     (fig = ceew.bar(...); ax.set_title(...); st.pyplot(fig)); every such call is accepted and does nothing,
     because the app draws the chart itself."""
 
-    def __init__(self, kind: str):
+    def __init__(self, kind: str, data=None):
         self.kind = kind
+        self.data = data         # the table the chart shows; used as the answer's table if result = ceew.bar(...)
 
     def __getattr__(self, name):
         if name.startswith("__"):
@@ -547,7 +603,7 @@ class Charts:
                       "you write the words under the chart.")
             self._ignored = []
         self._sink(spec)
-        return ChartHandle(spec.kind)
+        return ChartHandle(spec.kind, spec.data)
 
     # --- Ranking and magnitude ------------------------------------------------------------------
 
@@ -565,6 +621,7 @@ class Charts:
         _numeric(frame, [value], func)
         _unique(frame, category, func)
         frame = frame[[category, value]].copy()
+        frame[category] = as_dates(frame[category])
         spec = ChartSpec("bar", frame, why=str(why or ""))
         time = is_time(frame[category])
         n = len(frame)
@@ -632,6 +689,7 @@ class Charts:
         _numeric(frame, values, func)
         _unique(frame, category, func)
         frame = frame[[category] + values].copy()
+        frame[category] = as_dates(frame[category])
         spec = ChartSpec("grouped_bar", frame, why=str(why or ""))
         if len(values) == 1:
             return self.bar(frame, category, values[0], orientation=orientation, sort=sort, why=why)
@@ -707,6 +765,7 @@ class Charts:
         _numeric(frame, parts, func)
         _unique(frame, category, func)
         frame = frame[[category] + parts].copy()
+        frame[category] = as_dates(frame[category])
         spec = ChartSpec("stacked_bar", frame, why=str(why or ""))
         if len(frame) > MAX_BARS:
             return self._emit(_table(frame, spec, f"A bar chart holds at most {MAX_BARS} bars; this table has "
@@ -842,7 +901,7 @@ class Charts:
             _unique(frame, x, func)
             frame = frame[[x] + ys].copy()
             y_title = str(ys[0]) if len(ys) == 1 else ""
-        xs = _as_time(frame[x])
+        xs = as_dates(frame[x])
         if not (pd.api.types.is_datetime64_any_dtype(xs) or pd.api.types.is_numeric_dtype(xs)):
             spec.note("The x-axis is not a date or a number, so the points are evenly spaced in the order given. "
                       "For real time spacing, convert the column to dates in the code.")
@@ -878,7 +937,7 @@ class Charts:
         if frame[ys].isna().any().any() or (frame[ys] < 0).any().any():
             spec.note("Area charts cannot show missing or negative values, so this is a line chart.", "fallback")
             return self.line(frame, x=x, y=ys, why=why, _spec=spec)
-        frame[x] = _as_time(frame[x])
+        frame[x] = as_dates(frame[x])
         frame = frame.sort_values(x, kind="stable")
         order = frame[ys].sum().sort_values(ascending=False).index.tolist()
         if len(ys) > 1:
@@ -1050,8 +1109,25 @@ class Charts:
         return self._emit(spec)
 
     def heatmap(self, data, row=None, column=None, value=None, why=""):
-        """XY heatmap: two categorical columns and one value, in square cells."""
+        """XY heatmap: two categorical columns and one value, in square cells.
+
+        Also takes a wide table of numbers, one row per row label (for example df.corr()), when `column` and
+        `value` are not given.
+        """
         func = "heatmap"
+        if column is None and value is None and isinstance(data, pd.DataFrame):
+            wide = data.set_index(row) if (row is not None and row in data.columns) else data
+            labels = [c for c in wide.columns if not pd.api.types.is_numeric_dtype(wide[c])]
+            if len(labels) == 1 and row is None:
+                wide = wide.set_index(labels[0])
+                labels = []
+            numbers = wide.select_dtypes("number")
+            if not labels and numbers.shape[1] >= 2 and wide.index.is_unique:
+                row_name = str(numbers.index.name or "row")
+                column_name = "column" if row_name != "column" else "column_"
+                long = (numbers.rename_axis(row_name).rename_axis(column_name, axis=1).stack()
+                        .rename("value").reset_index())
+                return self.heatmap(long, row_name, column_name, "value", why=why)
         frame = _frame(data, func)
         row = _column(frame, row if row is not None else frame.columns[0], func, "row")
         column = _column(frame, column if column is not None else frame.columns[1], func, "column")
@@ -1200,7 +1276,10 @@ def _canvas(spec: ChartSpec, style: Style):
         bars = items * (len(spec.params.get("values", [None])) if spec.kind == "grouped_bar" else 1)
         plot = min(7.5, max(2.0, 0.8 + 0.28 * bars))
     elif spec.kind == "heatmap":
-        plot = min(7.0, max(2.0, 0.9 + 0.38 * len(spec.params["row_labels"])))
+        # Square cells: as wide as the columns allow (about 4.6 inches for the cells), at most 0.38 inches.
+        cell = min(0.38, 4.6 / max(len(spec.params["column_labels"]), 1))
+        row_need = _heatmap_rows(spec.params["row_labels"], 11)[1]
+        plot = min(7.0, max(1.6, 0.9 + max(cell, row_need) * len(spec.params["row_labels"])))
     elif spec.kind == "pie":
         plot = 3.0
     else:
@@ -1578,7 +1657,10 @@ def _draw_line(ax, spec, style, font_size):
     if numeric_x:
         _time_axis(ax, xs)
     else:
-        ax.set_xticks(x_values, labels_of(xs))
+        # Text along the x-axis: at most about eight labels, at regular steps, never at an angle.
+        step = next((s for s in (1, 2, 3, 4, 5, 6, 10, 12, 20, 25, 50) if len(x_values) / s <= 8), 100)
+        ticks = np.arange(0, len(x_values), step)
+        ax.set_xticks(ticks, [labels_of(xs)[i] for i in ticks])
     ax.margins(x=0.01)
     _line_axes(ax)
     items = [(label, colour) for label, colour in zip(labels, colours)]
@@ -1718,6 +1800,13 @@ def _draw_pie(ax, spec, style, font_size):
     return [(label, colour) for label, colour in zip(p["labels"], colours)], None
 
 
+def _heatmap_rows(labels, font_size):
+    """Row names wrapped onto at most a few lines, and the height (inches) one row needs to show them."""
+    wrapped = [_wrap_label(label, 26) for label in labels]
+    lines = max((label.count("\n") + 1 for label in wrapped), default=1)
+    return wrapped, lines * font_size * 1.3 / 72
+
+
 def _draw_heatmap(ax, spec, style, font_size):
     from matplotlib.colors import BoundaryNorm, ListedColormap
     p = spec.params
@@ -1732,17 +1821,37 @@ def _draw_heatmap(ax, spec, style, font_size):
     cmap = ListedColormap(colours)
     cmap.set_bad(style.background)
     ax.pcolormesh(np.ma.masked_invalid(grid), cmap=cmap, norm=BoundaryNorm(bounds, cmap.N),
-                  edgecolors=style.background, linewidth=1.5)
+                  edgecolors=style.background, linewidth=1.0 if grid.shape[1] > 12 else 1.5)
     ax.set_aspect("equal")
     ax.set_anchor("W")
     ax.invert_yaxis()
-    ax.set_xticks(np.arange(grid.shape[1]) + 0.5, p["column_labels"])
-    ax.set_yticks(np.arange(grid.shape[0]) + 0.5, p["row_labels"])
+    # Long row names go on two or more lines, so the cells keep most of the width.
+    row_labels, row_need = _heatmap_rows(p["row_labels"], font_size)
+    column_labels = list(p["column_labels"])
+    char_in = font_size * 0.55 / 72
+    label_in = max(len(line) for label in row_labels for line in label.split("\n")) * char_in
+    cell_in = max(0.05, (ax.figure.get_size_inches()[0] - 0.5 - label_in) / max(grid.shape[1], 1))
+    if row_need > cell_in:
+        # Many columns and long row names: square cells would be shorter than the names, which then overlap.
+        # Taller cells keep every name readable (legibility comes before the square-cell build rule).
+        ax.set_aspect("auto")
+    column_in = max((len(label) for label in column_labels), default=1) * char_in
+    ticks = np.arange(grid.shape[1])
+    rotate = False
+    if column_in > cell_in * 0.9:
+        if all(label.strip().lstrip("-").isdigit() for label in column_labels):
+            # Numbers such as hours: show every 2nd, 3rd ... label (regular steps), never at an angle.
+            step = next((s for s in (2, 3, 4, 6, 12) if s * cell_in >= column_in * 1.4), 24)
+            ticks = ticks[::step]
+        else:
+            rotate = True                                     # the rules allow 90 degrees only, never an angle
+    ax.set_xticks(ticks + 0.5, [column_labels[i] for i in ticks])
+    ax.set_yticks(np.arange(grid.shape[0]) + 0.5, row_labels)
     for side in ("left", "bottom", "top", "right"):
         ax.spines[side].set_visible(False)
     ax.tick_params(length=0, pad=4)
-    if _long_labels(p["column_labels"], 6) and len(p["column_labels"]) > 6:
-        ax.tick_params(axis="x", labelrotation=90)      # the rules allow 90 degrees only, never an angle
+    if rotate:
+        ax.tick_params(axis="x", labelrotation=90)
     return [(f"{_fmt(lo)} to {_fmt(hi)}", c) for lo, hi, c in zip(bounds[:-1], bounds[1:], colours)], None
 
 
