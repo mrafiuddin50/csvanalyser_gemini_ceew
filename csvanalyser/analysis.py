@@ -82,7 +82,7 @@ def analyse(question: str, df: pd.DataFrame, context: str, history: list, anonym
         turn["code"] = code
         report("Running the code on your computer…")
         try:
-            result, outputs = run_generated_code(code, request["work_df"], request["reverse"], style)
+            result, outputs = run_generated_code(code, request["work_df"], request["reverse"], style, question)
         except Exception as exc:
             failure = (code, sanitise_error(exc, code, request["work_df"]))
             # Full error is shown only to the user, never sent to the model.
@@ -152,7 +152,8 @@ def run_edited_code(base_turn: dict, code: str, df: pd.DataFrame, style=None) ->
         "error": None,
     }
     try:
-        turn["result"], turn["outputs"] = run_generated_code(code, request["work_df"], request["reverse"], style)
+        turn["result"], turn["outputs"] = run_generated_code(code, request["work_df"], request["reverse"], style,
+                                                             base_turn["question"])
     except Exception as exc:
         turn["error"] = f"{type(exc).__name__}: {restore_names(str(exc), request['reverse'])}"
     return turn

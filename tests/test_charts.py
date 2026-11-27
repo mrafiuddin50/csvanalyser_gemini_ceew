@@ -61,17 +61,28 @@ def test_bar_sorts_largest_first_and_says_so():
     assert asked.data["state"].tolist() == sorted(STATES["state"]) and "largest" not in notes(asked)
 
 
-def test_time_periods_stay_in_time_order_as_vertical_bars():
+def test_time_periods_stay_in_time_order_unless_asked_otherwise():
     data = pd.DataFrame({"year": [2022, 2020, 2021], "sales": [3.0, 1, 2]})
-    spec = draw("bar", data, "year", "sales", sort="descending")
-    assert spec.data["year"].tolist() == [2020, 2021, 2022]
-    assert spec.params["orientation"] == "vertical" and "time order" in notes(spec)
+    spec = draw("bar", data, "year", "sales")
+    assert spec.data["year"].tolist() == [2020, 2021, 2022] and spec.params["orientation"] == "vertical"
+    asked = draw("bar", data, "year", "sales", sort="descending")            # the question asked: largest first
+    assert asked.data["year"].tolist() == [2022, 2021, 2020]
+    assert "time order" in notes(asked, "override")
 
 
-def test_long_names_switch_to_horizontal_bars():
+def test_long_names_turn_bars_horizontal_unless_vertical_is_asked_for():
     data = pd.DataFrame({"district": ["A very long district name", "Another long district name"], "n": [1.0, 2]})
-    spec = draw("bar", data, "district", "n", orientation="vertical")
-    assert spec.params["orientation"] == "horizontal" and "rotated" in notes(spec)
+    auto = draw("bar", data, "district", "n")
+    assert auto.params["orientation"] == "horizontal"
+    asked = draw("bar", data, "district", "n", orientation="vertical")
+    assert asked.params["orientation"] == "vertical" and "as you asked" in notes(asked, "override")
+    assert "A very long\ndistrict name" in asked.params["tick_labels"]           # wrapped, not slanted
+    turned = draw("bar", data, "district", "n", orientation="vertical", label_angle=90)
+    assert turned.params["label_angle"] == 90 and "A very long district name" in turned.params["tick_labels"]
+    assert "90 degrees" in notes(turned, "override")
+    slanted = draw("bar", data, "district", "n", orientation="vertical", rotation=45)
+    assert "slant" in notes(slanted, "override") and render(slanted, Style(), dpi=40)[:4] == b"\x89PNG"
+    assert "Labels" not in notes(auto)                                     # no angle asked, no note
 
 
 def test_more_than_fifteen_bars_is_refused_and_time_becomes_a_line():
@@ -80,6 +91,64 @@ def test_more_than_fifteen_bars_is_refused_and_time_becomes_a_line():
     assert spec.kind == "table" and "at most 15" in notes(spec, "fallback")
     monthly = pd.DataFrame({"month": pd.date_range("2024-01-01", periods=20, freq="MS"), "v": np.arange(20.0)})
     assert draw("bar", monthly, "month", "v").kind == "line"
+
+
+def test_asked_for_rules_step_back_with_a_note():
+    many = pd.DataFrame({"site": [f"S{i}" for i in range(20)], "v": np.arange(20.0)})
+    bars = draw("bar", many, "site", "v", as_asked=True)
+    assert bars.kind == "bar" and len(bars.data) == 20 and "drawn as you asked" in notes(bars, "override")
+    assert render(bars, Style(), dpi=40)[:4] == b"\x89PNG"
+    monthly = pd.DataFrame({"month": pd.date_range("2024-01-01", periods=20, freq="MS"), "v": np.arange(20.0)})
+    assert draw("bar", monthly, "month", "v", as_asked=True).kind == "bar"
+    six = pd.DataFrame({"part": list("ABCDEF"), "pct": [20.0, 20, 20, 20, 10, 10]})
+    pie = draw("pie", six, "part", "pct", as_asked=True)
+    assert pie.kind == "pie" and "at most 5 slices" in notes(pie, "override")
+    slope = draw("slope", pd.DataFrame({"s": list("ABCDEF"), "a": np.arange(6.0), "b": np.arange(6.0) + 1}),
+                 "s", "a", "b", as_asked=True)
+    assert slope.kind == "slope" and "at most 4" in notes(slope, "override")
+    wide = pd.DataFrame({"g": list("AB"), "w": [1.0, 2], "x": [1.0, 2], "y": [1.0, 2], "z": [1.0, 2], "q": [1.0, 2]})
+    grouped = draw("grouped_bar", wide, "g", ["w", "x", "y", "z", "q"], as_asked=True)
+    assert grouped.kind == "grouped_bar" and "two to four series" in notes(grouped, "override")
+    four = draw("grouped_bar", wide, "g", ["w", "x", "y", "z"], orientation="horizontal")
+    assert four.params["orientation"] == "horizontal" and "at most three series" in notes(four, "override")
+    falling = pd.DataFrame({"year": range(2000, 2004), "balance": [1.0, -2, 3, -1]})
+    area = draw("area", falling, "year", ["balance"], as_asked=True)
+    assert area.kind == "area" and "as you asked" in notes(area, "override")
+
+
+def test_a_chart_named_in_the_question_counts_as_asked():
+    # Seen from gemini-3.5-flash-lite: 'Bar chart of the daily average' without as_asked=True became a line.
+    days = pd.DataFrame({"day": pd.date_range("2020-11-01", periods=30).date, "pm25": np.arange(30.0)})
+    code = "result = days\nceew.bar(days, 'day', 'pm25')"
+    _, outputs = run_generated_code(code.replace("days", "df"), days, {}, question="Bar chart of the daily average")
+    assert outputs[0][1][0].kind == "bar" and len(outputs[0][1][0].data) == 30
+    _, outputs = run_generated_code(code.replace("days", "df"), days, {}, question="Daily average PM2.5")
+    assert outputs[0][1][0].kind == "line"                                  # not asked: the rules' default
+    names = pd.DataFrame({"station": ["A very long station name", "Another long station name"], "v": [1.0, 2]})
+    _, outputs = run_generated_code("ceew.bar(df, 'station', 'v')\nresult = df", names, {},
+                                    question="Show a vertical chart of v by station")
+    assert outputs[0][1][0].params["orientation"] == "vertical"             # 'vertical' in the question
+
+
+def test_a_table_sorted_as_asked_keeps_its_order():
+    # Seen from gemini-3.5-flash-lite: asked for hours largest first, it sorted the table but passed no sort=.
+    hours = pd.DataFrame({"hour": range(24), "pm25": np.sin(np.arange(24) / 4) * 50 + 150})
+    ranked = hours.sort_values("pm25", ascending=False)
+    spec = draw("bar", ranked, "hour", "pm25", as_asked=True)
+    assert spec.data["pm25"].is_monotonic_decreasing and "time order" in notes(spec, "override")
+    plain = draw("bar", ranked.head(12), "hour", "pm25")                     # not asked: back in time order
+    assert plain.data["hour"].is_monotonic_increasing
+
+
+def test_accuracy_rules_hold_even_when_asked():
+    double = pd.DataFrame({"answer": list("ABC"), "pct": [60.0, 50, 30]})
+    assert draw("pie", double, "answer", "pct", as_asked=True).kind == "bar"           # R1: not one whole
+    gaps = pd.DataFrame({"year": range(2000, 2003), "a": [1.0, None, 3], "b": [1.0, 2, 3]})
+    assert draw("area", gaps, "year", ["a", "b"], as_asked=True).kind == "line"      # filling gaps invents values
+    bars = draw("bar", STATES, "state", "capacity_mw", as_asked=True)
+    assert render(bars, Style(), dpi=40)[:4] == b"\x89PNG"
+    stacked = pd.DataFrame({"state": ["A", "B"], "lpg": [70.0, 60], "wood": [50.0, 40]})
+    assert draw("stacked_bar", stacked, "state", ["lpg", "wood"], as_asked=True).kind == "grouped_bar"
 
 
 def test_bars_need_one_row_per_category():

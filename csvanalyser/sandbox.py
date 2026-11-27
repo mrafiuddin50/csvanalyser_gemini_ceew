@@ -198,13 +198,15 @@ def network_blocked():
             setattr(obj, attr, original)
 
 
-def run_generated_code(code: str, df: pd.DataFrame, reverse_aliases: dict, style: Style | None = None):
+def run_generated_code(code: str, df: pd.DataFrame, reverse_aliases: dict, style: Style | None = None,
+                       question: str = ""):
     """Executes generated code in its own namespace on a copy of the data.
 
     Returns (result, outputs) where outputs is a list of recorded display calls; ceew.* charts are
     recorded as ("chart", (ChartSpec,), {}) and drawn by the app.
     Raises NoResultError if the code does not define `result`.
     style: the CEEW chart style, also applied to charts drawn with plain matplotlib.
+    question: the researcher's question (stays on the computer); a chart it names counts as asked for.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -233,7 +235,7 @@ def run_generated_code(code: str, df: pd.DataFrame, reverse_aliases: dict, style
         "np": np,
         "plt": plt,
         "st": recorder,
-        "ceew": Charts(recorder._add_chart),
+        "ceew": Charts(recorder._add_chart, question),
     }
 
     plt.close("all")

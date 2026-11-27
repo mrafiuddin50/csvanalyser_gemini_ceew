@@ -390,12 +390,25 @@ def labels_of(series: pd.Series) -> list:
 SORTS = ("descending", "ascending", "alphabetical", "data")
 
 
-def _sort(frame, category, value, sort, spec, func):
-    """Bar order: time order always wins; otherwise the requested order, largest first by default."""
+def _sort(frame, category, value, sort, spec, func, asked=False):
+    """Bar order: time periods in time order and other categories largest first, unless the question asks for
+    another order; a requested order that breaks time order is followed, with a note.
+
+    asked: the question asked for this chart. If the table already comes sorted by value (Gemini sorted it as the
+    question asked, without passing sort=), that order is kept.
+    """
+    if sort is None and asked and len(frame) > 2:
+        values = frame[value]
+        if values.is_monotonic_decreasing or values.is_monotonic_increasing:
+            sort = "kept"
     if is_time(frame[category]):
-        if sort not in (None, "data", "ascending"):
-            spec.note("Time periods are kept in time order (the chart rules say time order always wins).")
-        return frame.sort_values(category, kind="stable")
+        if sort in (None, "data") or (sort == "kept" and frame[category].is_monotonic_increasing):
+            return frame.sort_values(category, kind="stable")
+        if sort in ("descending", "alphabetical", "kept"):
+            departs(spec, "Time periods are kept in time order under the CEEW chart rules, so the reader sees the "
+                          "trend; sorted as you asked instead.")
+    if sort == "kept":
+        return frame
     if _is_ordered(frame[category]) and sort in (None, "data"):
         return frame.sort_values(category, kind="stable")       # ordered categories keep their own order
     order = natural_order(frame[category]) if sort is None else None
@@ -438,6 +451,22 @@ def _offer_grey_out(n, highlight, spec):
         spec.note(f"This chart has {n} categories. If you want, name one to three of them to highlight in your "
                   "question; the rest then turn grey as context. Choosing them is choosing the story, so the "
                   "app never picks them for you.")
+
+
+def departs(spec, text):
+    """A note that the chart departs from a CEEW chart rule because the question asked for it."""
+    spec.note(text, "override")
+
+
+def _too_many(spec, n, limit, what, asked) -> bool:
+    """True when there are more items than the rule allows and the question did not ask for them all."""
+    if n <= limit:
+        return False
+    if asked:
+        departs(spec, f"{what} hold at most {limit} categories under the CEEW chart rules; this one has {n}, drawn "
+                      "as you asked. Consider narrowing to the ones your reader needs.")
+        return False
+    return True
 
 
 def _table(frame, spec, message) -> ChartSpec:
@@ -500,6 +529,17 @@ FUNCTION_ALIASES = {
 }
 
 
+# Words in the researcher's question that name each chart. A question that names the chart has asked for it,
+# whether or not the generated code says so (as_asked=True), and its layout rules step back with a note.
+CHART_WORDS = {
+    "bar": r"\bbars?\b|\bcolumns? chart|\bcolumn graph", "lollipop": r"\blollipop", "grouped_bar": r"\bgrouped\b|\bbars?\b",
+    "diverging_bar": r"\bdiverging\b|\bbars?\b", "stacked_bar": r"\bstacked\b", "pie": r"\bpie\b",
+    "donut": r"\bdo(ugh)?nut", "line": r"\bline (chart|graph|plot)", "area": r"\barea (chart|graph|plot)",
+    "slope": r"\bslope", "range_plot": r"\brange plot|\bdumbbell", "histogram": r"\bhistogram",
+    "boxplot": r"\bbox ?(and whisker )?plot|\bbox ?chart", "scatter": r"\bscatter", "heatmap": r"\bheat ?map",
+}
+
+
 def _flexible(method):
     """Accepts Gemini's other names for arguments, and sets aside arguments the rules do not use."""
     import functools
@@ -507,9 +547,23 @@ def _flexible(method):
 
     params = list(inspect.signature(method).parameters)[1:]      # without self
     aliases = ARGUMENT_ALIASES.get(method.__name__, {})
+    words = re.compile(CHART_WORDS.get(method.__name__, r"(?!)"), re.IGNORECASE)
 
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
+        # as_asked=True: the question itself asks for this chart or look, so rules on layout and chart type step
+        # back (with a note). label_angle: turn the category labels, as the question asks.
+        question = self.__dict__.get("_question") or ""
+        asked = any(bool(kwargs.pop(k)) for k in ("as_asked", "requested", "user_requested") if k in kwargs)
+        asked = asked or bool(words.search(question))
+        if "orientation" in params and "orientation" not in kwargs and len(args) <= params.index("orientation"):
+            for word in ("vertical", "horizontal"):
+                if re.search(rf"\b{word}\b", question, re.IGNORECASE):
+                    kwargs["orientation"] = word      # 'a vertical bar chart' in the question
+        angle = None
+        for key in ("label_angle", "rotation", "label_rotation", "tick_rotation", "xticks_rotation"):
+            if key in kwargs:
+                angle = kwargs.pop(key)
         given = set(params[:len(args)]) | set(kwargs)
         ignored = []
         for alias in [k for k in kwargs if k not in params]:
@@ -522,15 +576,18 @@ def _flexible(method):
                 ignored.append(alias)
         outermost = not self.__dict__.get("_depth")
         if outermost:
-            self._ignored = []
+            self._ignored, self._as_asked, self._label_angle = [], False, None
         self._ignored = (self.__dict__.get("_ignored") or []) + ignored
+        self._as_asked = self.__dict__.get("_as_asked") or asked
+        if angle is not None:
+            self._label_angle = angle
         self._depth = self.__dict__.get("_depth", 0) + 1
         try:
             return method(self, *args, **kwargs)
         finally:
             self._depth -= 1
             if outermost:
-                self._ignored = []
+                self._ignored, self._as_asked, self._label_angle = [], False, None
     return wrapper
 
 
@@ -582,8 +639,9 @@ class ChartHandle:
 class Charts:
     """The chart functions. `sink` receives each ChartSpec (the app stores it; a notebook draws it)."""
 
-    def __init__(self, sink):
+    def __init__(self, sink, question: str = ""):
         self._sink = sink
+        self._question = question or ""     # the researcher's question: naming a chart there means it was asked for
 
     def __getattr__(self, name):
         if name.startswith("_"):
@@ -595,12 +653,32 @@ class Charts:
         raise AttributeError(f"ceew.{name} is not available. Chart functions: " + ", ".join(
             f"ceew.{n}" for n in CHART_FUNCTIONS))
 
+    def _asked(self) -> bool:
+        """The question asks for this chart or look: layout and chart-type rules step back, with a note."""
+        return bool(self.__dict__.get("_as_asked"))
+
+    def _angle(self):
+        try:
+            angle = self.__dict__.get("_label_angle")
+            return None if angle is None else float(angle)
+        except (TypeError, ValueError):
+            return None
+
     def _emit(self, spec: ChartSpec):
         ignored = self.__dict__.get("_ignored") or []
         if ignored:
             spec.note("Not used: " + ", ".join(ignored) + ". The chart rules set the titles, colours and sizes; "
                       "you write the words under the chart.")
             self._ignored = []
+        angle = self._angle()
+        if angle is not None and spec.kind != "table" and angle % 180:
+            spec.params["label_angle"] = angle
+            if abs(angle) % 180 == 90:
+                departs(spec, "Labels turned 90 degrees as you asked. The CEEW chart rules keep labels level and turn "
+                              "them only when nothing else fits.")
+            else:
+                departs(spec, f"Labels at {angle:g} degrees as you asked. The CEEW chart rules never set labels at a "
+                              "slant, which is harder to read; they turn labels 90 degrees at most.")
         self._sink(spec)
         return ChartHandle(spec.kind, spec.data)
 
@@ -610,6 +688,7 @@ class Charts:
         """Bar chart of one value per category. Horizontal by default; vertical for time periods."""
         func = "bar"
         orientation = _orientation(orientation, func)
+        asked_vertical = orientation == "vertical"
         if isinstance(value, (list, tuple)):
             if len(value) > 1:      # several value columns: that is a grouped bar chart
                 return self.grouped_bar(data, category, list(value), orientation=orientation, sort=sort, why=why)
@@ -626,27 +705,36 @@ class Charts:
         n = len(frame)
         if n == 0:
             return self._emit(_table(frame, spec, "There is nothing to plot: the table is empty."))
-        if n > MAX_BARS:
+        if _too_many(spec, n, MAX_BARS, "Bar charts", self._asked()):
             if time:
-                spec.note(f"{n} time periods are too many for bars (at most {MAX_BARS}), so this is a line chart.",
-                          "fallback")
+                spec.note(f"{n} time periods are too many for bars (at most {MAX_BARS}), so this is a line chart. "
+                          "To keep bars, ask for a bar chart in your question.", "fallback")
                 return self.line(frame, x=category, y=value, why=why, _spec=spec)
             return self._emit(_table(frame, spec, (
                 f"A bar chart holds at most {MAX_BARS} categories; this table has {n}. Narrow the question to the "
-                f"categories you need (for example the top {MAX_BARS}, if that suits your story), or use the table.")))
-        frame = _sort(frame, category, value, sort, spec, func)
+                f"categories you need (for example the top {MAX_BARS}), or ask for a bar chart of all {n} to draw "
+                "them anyway.")))
+        frame = _sort(frame, category, value, sort, spec, func, self._asked())
         labels = labels_of(frame[category])
         if orientation == "auto":
             orientation = "vertical" if time else "horizontal"
+        tick_labels = labels
         if orientation == "vertical" and not time and _long_labels(labels):
-            spec.note("Category names are long, so the bars are horizontal (the chart rules avoid rotated labels).")
-            orientation = "horizontal"
+            if asked_vertical:
+                departs(spec, "Long category names usually read better on horizontal bars under the CEEW chart rules; "
+                              "drawn vertical as you asked" + ("." if self._angle() is not None else
+                                                              ", with the names on several lines."))
+                if self._angle() is None:
+                    tick_labels = [_wrap_label(label) for label in labels]
+            else:
+                spec.note("Category names are long, so the bars are horizontal. For vertical bars, ask for them.")
+                orientation = "horizontal"
         if (frame[value] < 0).any() and (frame[value] > 0).any():
             spec.note("Some values are negative. If they show movement away from a reference point, ask for a "
                       "diverging bar chart, which colours the two directions differently.")
         spec.data = frame
         spec.params = {"category": category, "value": value, "orientation": orientation, "labels": labels,
-                       "highlight": _match_highlight(labels, highlight, spec),
+                       "tick_labels": tick_labels, "highlight": _match_highlight(labels, highlight, spec),
                        "value_axes": ("x_title",) if orientation == "horizontal" else ("y_title",)}
         _offer_grey_out(n, highlight, spec)
         if orientation == "horizontal":
@@ -665,10 +753,10 @@ class Charts:
         _unique(frame, category, func)
         frame = frame[[category, value]].copy()
         spec = ChartSpec("lollipop", frame, why=str(why or ""))
-        if len(frame) > MAX_BARS:
+        if _too_many(spec, len(frame), MAX_BARS, "Lollipop charts", self._asked()):
             return self._emit(_table(frame, spec, f"A lollipop chart holds at most {MAX_BARS} categories; this "
                                      f"table has {len(frame)}. Narrow the question, or use the table."))
-        frame = _sort(frame, category, value, sort, spec, func)
+        frame = _sort(frame, category, value, sort, spec, func, self._asked())
         labels = labels_of(frame[category])
         spec.data = frame
         spec.params = {"category": category, "value": value, "labels": labels,
@@ -680,6 +768,7 @@ class Charts:
         """Grouped bars: two to four series (vertical) or two or three (horizontal) side by side."""
         func = "grouped_bar"
         orientation = _orientation(orientation, func)
+        asked_orientation = orientation
         frame = _frame(data, func)
         category = _column(frame, category if category is not None else frame.columns[0], func, "category")
         if values is None:
@@ -692,28 +781,41 @@ class Charts:
         spec = ChartSpec("grouped_bar", frame, why=str(why or ""))
         if len(values) == 1:
             return self.bar(frame, category, values[0], orientation=orientation, sort=sort, why=why)
-        if is_time(frame[category]) and (len(frame) > MAX_BARS or len(values) > 4):
+        asked = self._asked()
+        if is_time(frame[category]) and (len(frame) > MAX_BARS or len(values) > 4) and not asked:
             spec.note(f"{len(frame)} time periods and {len(values)} series are too many for grouped bars, so this "
-                      "is a line chart with one line per series.", "fallback")
+                      "is a line chart with one line per series. To keep bars, ask for grouped bars.", "fallback")
             return self.line(frame, x=category, y=values, why=why, _spec=spec)
         if len(values) > 4:
-            return self._emit(_table(frame, spec, f"Grouped bars hold two to four series; this table has "
-                                     f"{len(values)}. Ask for fewer series, or for one chart per series."))
-        if len(frame) > MAX_BARS:
+            if not asked:
+                return self._emit(_table(frame, spec, f"Grouped bars hold two to four series; this table has "
+                                         f"{len(values)}. Ask for fewer series, or ask for grouped bars of all "
+                                         f"{len(values)} to draw them anyway."))
+            departs(spec, f"Grouped bars hold two to four series under the CEEW chart rules; this one has "
+                          f"{len(values)}, drawn as you asked.")
+        if _too_many(spec, len(frame), MAX_BARS, "Bar charts", asked):
             return self._emit(_table(frame, spec, f"A bar chart holds at most {MAX_BARS} categories; this table "
-                                     f"has {len(frame)}. Narrow the question, or use the table."))
-        frame = _sort(frame, category, values[0], sort, spec, func)
+                                     f"has {len(frame)}. Narrow the question, or ask for grouped bars of all of "
+                                     "them to draw them anyway."))
+        frame = _sort(frame, category, values[0], sort, spec, func, self._asked())
         labels = labels_of(frame[category])
         if orientation == "auto":
             orientation = "horizontal" if (_long_labels(labels) and len(values) <= 3) else "vertical"
         if orientation == "horizontal" and len(values) > 3:
-            spec.note("Horizontal grouped bars hold at most three series, so these bars are vertical.")
-            orientation = "vertical"
-        if orientation == "vertical" and _long_labels(labels, 14):
-            if len(values) <= 3:
-                orientation = "horizontal"
-                spec.note("Category names are long, so the bars are horizontal.")
+            if asked_orientation == "horizontal":
+                departs(spec, "Horizontal grouped bars hold at most three series under the CEEW chart rules; drawn "
+                              "horizontal as you asked.")
             else:
+                spec.note("Horizontal grouped bars hold at most three series, so these bars are vertical.")
+                orientation = "vertical"
+        if orientation == "vertical" and _long_labels(labels, 14):
+            if asked_orientation == "vertical":
+                departs(spec, "Long category names usually read better on horizontal bars under the CEEW chart "
+                              "rules; drawn vertical as you asked.")
+            if len(values) <= 3 and asked_orientation != "vertical":
+                orientation = "horizontal"
+                spec.note("Category names are long, so the bars are horizontal. For vertical bars, ask for them.")
+            elif self._angle() is None:
                 labels = [_wrap_label(label) for label in labels]
         spec.data = frame
         spec.params = {"category": category, "values": values, "orientation": orientation, "labels": labels,
@@ -731,7 +833,7 @@ class Charts:
         _unique(frame, category, func)
         frame = frame[[category, value]].copy()
         spec = ChartSpec("diverging_bar", frame, why=str(why or ""))
-        if len(frame) > MAX_BARS:
+        if _too_many(spec, len(frame), MAX_BARS, "Bar charts", self._asked()):
             return self._emit(_table(frame, spec, f"A bar chart holds at most {MAX_BARS} categories; this table "
                                      f"has {len(frame)}. Narrow the question, or use the table."))
         if above not in SHADES or below not in SHADES or above == below:
@@ -740,7 +842,7 @@ class Charts:
             spec.note("Green is never used for values below and orange never for values above (readers take green "
                       "as up and red as down), so the colours are blue above and orange below.")
             above, below = "blue", "orange"
-        frame = _sort(frame, category, value, sort, spec, func)
+        frame = _sort(frame, category, value, sort, spec, func, self._asked())
         labels = labels_of(frame[category])
         spec.data = frame
         spec.params = {"category": category, "value": value, "labels": labels, "reference": str(reference),
@@ -766,9 +868,10 @@ class Charts:
         frame = frame[[category] + parts].copy()
         frame[category] = as_dates(frame[category])
         spec = ChartSpec("stacked_bar", frame, why=str(why or ""))
-        if len(frame) > MAX_BARS:
+        if _too_many(spec, len(frame), MAX_BARS, "Bar charts", self._asked()):
             return self._emit(_table(frame, spec, f"A bar chart holds at most {MAX_BARS} bars; this table has "
-                                     f"{len(frame)}. Narrow the question, or use the table."))
+                                     f"{len(frame)}. Narrow the question, or ask for stacked bars of all of them to "
+                                     "draw them anyway."))
         totals = frame[parts].sum(axis=1, min_count=1)
         if totals.between(0.99, 1.01).all() and (frame[parts] >= 0).all().all():
             frame[parts] = frame[parts] * 100
@@ -794,8 +897,15 @@ class Charts:
         colours, greyed = categorical_colours(part_labels, Style())
         if greyed:
             spec.note(f"More than {MAX_COLOURED} parts: {', '.join(greyed)} are shown in light grey.")
+        tick_labels = labels
+        if orientation == "vertical" and _long_labels(labels, 14):
+            departs(spec, "Long category names usually read better on horizontal bars under the CEEW chart rules; "
+                          "drawn vertical as you asked.")
+            if self._angle() is None:
+                tick_labels = [_wrap_label(label) for label in labels]
         spec.data = frame
         spec.params = {"category": category, "parts": parts, "orientation": orientation, "labels": labels,
+                       "tick_labels": tick_labels,
                        "value_axes": ("x_title",) if orientation == "horizontal" else ("y_title",)}
         if orientation == "horizontal":
             spec.x_title = "Share (%)"
@@ -844,7 +954,13 @@ class Charts:
             problem = (f"the parts add up to {total:,.0f}%, not 100% (rule R1: parts of one whole only); shares "
                        "that add up to more than 100% usually mean one unit was counted more than once")
         elif len(frame) > MAX_PIE_SLICES:
-            problem = f"a pie chart holds at most {MAX_PIE_SLICES} slices; this has {len(frame)}"
+            if self._asked():
+                departs(spec, f"Pie charts hold at most {MAX_PIE_SLICES} slices under the CEEW chart rules (small "
+                              f"slices are hard to compare); this one has {len(frame)}, drawn as you asked. A bar "
+                              "chart shows the same parts more clearly.")
+            else:
+                problem = (f"a pie chart holds at most {MAX_PIE_SLICES} slices; this has {len(frame)} (ask for a "
+                           "pie chart of all of them to draw it anyway)")
         if problem:
             spec.note(f"Not drawn as a pie: {problem}. Drawn as a horizontal bar chart instead.", "fallback")
             return self._bar_from(frame, category, value, spec)
@@ -933,9 +1049,20 @@ class Charts:
         _unique(frame, x, func)
         frame = frame[[x] + ys].copy()
         spec = ChartSpec("area", frame, why=str(why or ""))
-        if frame[ys].isna().any().any() or (frame[ys] < 0).any().any():
-            spec.note("Area charts cannot show missing or negative values, so this is a line chart.", "fallback")
+        if frame[ys].isna().any().any():
+            # Filling a gap would invent values, so this stays a line whatever was asked.
+            spec.note("Area charts cannot show gaps in the data without inventing values, so this is a line chart, "
+                      "which breaks at the gaps.", "fallback")
             return self.line(frame, x=x, y=ys, why=why, _spec=spec)
+        if (frame[ys] < 0).any().any():
+            if len(ys) == 1 and self._asked():
+                departs(spec, "Area charts suit values that are all zero or above under the CEEW chart rules; drawn "
+                              "as you asked, shaded from zero.")
+            else:
+                spec.note("Stacked areas cannot show negative values honestly, so this is a line chart."
+                          + (" A single series can be drawn as an area if you ask for one." if len(ys) == 1 else ""),
+                          "fallback")
+                return self.line(frame, x=x, y=ys, why=why, _spec=spec)
         frame[x] = as_dates(frame[x])
         frame = frame.sort_values(x, kind="stable")
         order = frame[ys].sum().sort_values(ascending=False).index.tolist()
@@ -959,10 +1086,15 @@ class Charts:
         frame = frame[[category, start, end]].copy()
         spec = ChartSpec("slope", frame, why=str(why or ""))
         if len(frame) > MAX_SLOPE_CATEGORIES:
-            spec.note(f"Slope charts hold at most {MAX_SLOPE_CATEGORIES} categories when comparing values; this has "
-                      f"{len(frame)}, so it is drawn as a range plot, which shows the change for many categories.",
-                      "fallback")
-            return self.range_plot(frame, category, start, end, why=why, _spec=spec)
+            if self._asked():
+                departs(spec, f"Slope charts hold at most {MAX_SLOPE_CATEGORIES} categories under the CEEW chart rules "
+                              f"(more lines cross and tangle); this one has {len(frame)}, drawn as you asked. A range "
+                              "plot shows the same change for many categories more clearly.")
+            else:
+                spec.note(f"Slope charts hold at most {MAX_SLOPE_CATEGORIES} categories when comparing values; this "
+                          f"has {len(frame)}, so it is drawn as a range plot, which shows the change for many "
+                          "categories. To keep the slope chart, ask for one.", "fallback")
+                return self.range_plot(frame, category, start, end, why=why, _spec=spec)
         spec.params = {"category": category, "start": start, "end": end, "labels": labels_of(frame[category]),
                        "value_axes": ("y_title",)}
         spec.note("Both columns must use the same unit. Add a y-axis title with the unit below the chart.")
@@ -982,10 +1114,10 @@ class Charts:
         frame = frame[[category, start, end]].copy()
         spec = _spec or ChartSpec("range_plot", frame, why=str(why or ""))
         spec.kind = "range_plot"
-        if len(frame) > MAX_BARS:
+        if _too_many(spec, len(frame), MAX_BARS, "Range plots", self._asked()):
             return self._emit(_table(frame, spec, f"A range plot holds at most {MAX_BARS} categories here; this "
                                      f"table has {len(frame)}. Narrow the question, or use the table."))
-        frame = _sort(frame, category, end, sort, spec, func)
+        frame = _sort(frame, category, end, sort, spec, func, self._asked())
         spec.data = frame
         spec.params = {"category": category, "start": start, "end": end, "labels": labels_of(frame[category]),
                        "value_axes": ("x_title",)}
@@ -1050,7 +1182,7 @@ class Charts:
         else:
             groups = [None]
         spec = ChartSpec("boxplot", frame, why=str(why or ""))
-        if len(groups) > MAX_BARS:
+        if _too_many(spec, len(groups), MAX_BARS, "Boxplots", self._asked()):
             return self._emit(_table(frame.groupby(group)[value].describe(), spec,
                                      f"A boxplot holds at most {MAX_BARS} groups here; this has {len(groups)}."))
         boxes, labels = [], []
@@ -1064,7 +1196,8 @@ class Charts:
         if orientation == "auto":
             orientation = "horizontal" if _long_labels(labels, 14) else "vertical"
         # Standing boxes with long group names: the names go on several lines, never at an angle.
-        tick_labels = [_wrap_label(label) for label in labels] if orientation == "vertical" else labels
+        wrap = orientation == "vertical" and self._angle() is None
+        tick_labels = [_wrap_label(label) for label in labels] if wrap else labels
         spec.params = {"boxes": boxes, "labels": labels, "tick_labels": tick_labels, "value": value,
                        "orientation": orientation}
         spec.params["value_axes"] = ("x_title",) if spec.params["orientation"] == "horizontal" else ("y_title",)
@@ -1137,8 +1270,11 @@ class Charts:
         spec = ChartSpec("heatmap", frame[[row, column, value]].copy(), why=str(why or ""))
         grid = frame.pivot(index=row, columns=column, values=value)
         if len(grid.index) > 40 or len(grid.columns) > 40:
-            return self._emit(_table(grid, spec, "A heatmap holds at most 40 rows and 40 columns here. Narrow the "
-                                     "question, or use the table."))
+            if not self._asked():
+                return self._emit(_table(grid, spec, "A heatmap holds at most 40 rows and 40 columns here. Narrow the "
+                                         "question, or ask for a heatmap of all of them to draw it anyway."))
+            departs(spec, f"This heatmap has {len(grid.index)} rows and {len(grid.columns)} columns, drawn as you "
+                          "asked; cells this small are hard to read.")
         spec.params = {"grid": grid, "row": row, "column": column, "value": value,
                        "row_labels": labels_of(pd.Series(grid.index, name=row)),
                        "column_labels": labels_of(pd.Series(grid.columns, name=column))}
@@ -1273,7 +1409,7 @@ def _canvas(spec: ChartSpec, style: Style):
     # Research report: fits an A4 page; height follows the number of items.
     if horizontal:
         bars = items * (len(spec.params.get("values", [None])) if spec.kind == "grouped_bar" else 1)
-        plot = min(7.5, max(2.0, 0.8 + 0.28 * bars))
+        plot = min(9.0, max(2.0, 0.8 + 0.28 * bars))      # up to most of an A4 page when many bars are asked for
     elif spec.kind == "heatmap":
         # Square cells: as wide as the columns allow (about 4.6 inches for the cells), at most 0.38 inches.
         cell = min(0.38, 4.6 / max(len(spec.params["column_labels"]), 1))
@@ -1337,6 +1473,13 @@ def render(spec: ChartSpec, style: Style | None = None, texts: dict | None = Non
         canvas = FigureCanvasAgg(fig)
         ax = fig.add_axes([0.1, 0.1, 0.8, 0.8])
         legend_items, ends = _DRAW[spec.kind](ax, spec, style, font_size)
+        angle = spec.params.get("label_angle")
+        if angle:                                    # the question asked for turned labels (noted on the chart)
+            ax.tick_params(axis="x", labelrotation=angle)
+            if angle % 90:
+                for label in ax.get_xticklabels():
+                    label.set_horizontalalignment("right" if angle > 0 else "left")
+                    label.set_rotation_mode("anchor")
         # Presentation and outreach: label up to eight lines directly instead of a legend.
         direct = bool(ends) and style.use != "report" and len(legend_items) <= MAX_COLOURED
         titles = axis_titles(spec, texts)
@@ -1358,6 +1501,12 @@ def render(spec: ChartSpec, style: Style | None = None, texts: dict | None = Non
             legend, legend_h = _legend(fig, legend_items, width - 2 * margin, font_size, renderer)
 
         if total_h is None:
+            # Report charts grow with their labels: long names turned 90 degrees (or wrapped onto several lines)
+            # below the axis would otherwise squeeze the plot itself.
+            tight = ax.get_tightbbox(renderer)
+            box = ax.get_window_extent(renderer)
+            labels_in = ((box.y0 - tight.y0) + (tight.y1 - box.y1)) / fig.dpi
+            plot_h += max(0.0, labels_in - 0.7)
             total_h = margin + head_h + plot_h + (legend_h + gap if legend else 0) + foot_h + margin
             fig.set_size_inches(width, total_h)
             renderer = canvas.get_renderer()
@@ -1492,7 +1641,7 @@ def _draw_bar(ax, spec, style, font_size):
         ax.set_ylim(-0.6, len(values) - 0.4)
     else:
         ax.bar(positions, values, width=0.68, color=colours)
-        ax.set_xticks(positions, p["labels"])
+        ax.set_xticks(positions, p.get("tick_labels") or p["labels"])
         ax.set_xlim(-0.6, len(values) - 0.4)
     _category_axis(ax, horizontal)
     _zero_baseline(ax, values, horizontal)
@@ -1502,8 +1651,9 @@ def _draw_bar(ax, spec, style, font_size):
 
 def _thin_time_labels(ax, spec, horizontal):
     """Year labels may be thinned, but only in regular steps of 2 or 5."""
-    if horizontal or not is_time(spec.data[spec.params["category"]]):
-        return
+    periods = spec.data[spec.params["category"]]
+    if horizontal or not is_time(periods) or not periods.is_monotonic_increasing:
+        return                       # out of time order (sorted by value as asked), every bar needs its label
     labels = spec.params["labels"]
     if len(labels) <= 10:
         return
@@ -1573,7 +1723,7 @@ def _draw_stacked_bar(ax, spec, style, font_size):
         ax.set_yticks(base, p["labels"])
         ax.set_xlim(0, 100)
     else:
-        ax.set_xticks(base, p["labels"])
+        ax.set_xticks(base, p.get("tick_labels") or p["labels"])
         ax.set_ylim(0, 100)
     _category_axis(ax, horizontal)
     return [(str(s), c) for s, c in zip(parts, colours)], None

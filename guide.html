@@ -193,16 +193,22 @@
   <h3 id="charts">Charts in the CEEW house style</h3>
   <p>Charts follow the CEEW data viz skill: CEEW colours, the Familjen Grotesk font, and the skill's chart menu and
     rules. Gemini chooses a chart from your question and the column names; the rules that need the data are
-    checked on your computer. For example:</p>
+    checked on your computer. When your question does not say how the chart should look, the rules choose:</p>
   <ul>
-    <li>a pie chart is drawn only for up to five parts that add up to 100%; otherwise you get a bar chart and a
-      note saying why;</li>
-    <li>bars start at zero, hold at most 15 categories, and are sorted largest first unless you ask for another
-      order (time periods always stay in time order);</li>
-    <li>lines break where the data has gaps instead of joining across them;</li>
+    <li>bars are horizontal when the names are long, hold at most 15 categories, and are sorted largest first (time
+      periods stay in time order);</li>
+    <li>a pie chart holds at most five slices; a slope chart at most four categories;</li>
+    <li>labels are never set at a slant;</li>
     <li>with more than 10 categories, you can name one to three to highlight and the rest turn grey. The app never
       chooses what to highlight, because that is choosing the story.</li>
   </ul>
+  <p><strong>When your question asks for a look, you get it.</strong> Name the chart or the look in your question
+    ("a vertical bar chart", "a pie chart", "all 30 stations", "largest first", "labels turned 90 degrees") and the
+    chart is drawn as asked. A yellow note above the chart says which CEEW chart rule it departs from and why the
+    rule exists, so you can decide.</p>
+  <p>Some rules protect the accuracy of the chart and hold whatever you ask: a pie chart or 100% stacked bars only
+    for parts of one whole that add up to 100%; bars that start at zero; no second y-axis; no trend lines or
+    ranges the data does not contain; and lines that break where the data has gaps.</p>
   <figure>
     <img src="guide-images/07-chart-answer.jpg" alt="An answer card with a horizontal bar chart of average PM2.5 by station, Gemini's reason for the chart above it, and a note that the bars are sorted largest first" />
     <figcaption>A chart answer from the synthetic sample. Above the chart, Gemini's reason for choosing it; below
@@ -319,8 +325,9 @@
       "remove duplicate rows first" or "dates are day/month/year".</li>
     <li><strong>Ask for the output you want:</strong> "show a bar chart", "return a table sorted by…" or "give a
       single number".</li>
-    <li><strong>For charts, say what the reader should compare</strong>, and any choices that are yours: the sort
-      order, which items to highlight, or the bin width for a histogram ("in bins of 5").</li>
+    <li><strong>For charts, say what the reader should compare</strong>, and any choices that are yours: the chart
+      type, vertical or horizontal, the sort order, which items to highlight, or the bin width for a histogram ("in
+      bins of 5"). What you ask for is drawn, with a note where it departs from the CEEW chart rules.</li>
     <li><strong>One question at a time.</strong> Build up with follow-ups ("now do the same by month").</li>
     <li><strong>Check the code</strong>, especially filters and how missing values are treated, before using a
       result in your work. <em>Explain this code</em> helps.</li>

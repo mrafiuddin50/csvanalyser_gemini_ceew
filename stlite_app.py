@@ -424,7 +424,9 @@ def _render_chart(turn: dict, index: int, spec):
         st.caption(f"**Gemini's reason for this chart:** {spec.why}")
     for level, text in spec.notes:
         if level == "fallback":
-            st.info(text)
+            st.info(text)                 # the chart rules changed the chart, and say why
+        elif level == "override":
+            st.warning(text)              # drawn as asked, against a CEEW chart rule
     if spec.kind == "table":
         st.dataframe(spec.data)
         return
@@ -434,7 +436,7 @@ def _render_chart(turn: dict, index: int, spec):
     with st.container(key="tour-chart") if newest else st.container():
         show_png(_chart_png(turn, index, spec), CHART_DISPLAY_WIDTH.get(_chart_style().use, 680),
                  _chart_alt(spec, texts))
-        tips = [text for level, text in spec.notes if level != "fallback"]
+        tips = [text for level, text in spec.notes if level not in ("fallback", "override")]
         if tips:
             st.caption("\n".join(f"- {tip}" for tip in tips))
     for flag in (turn.get("chart_flags") or {}).get(index, []):

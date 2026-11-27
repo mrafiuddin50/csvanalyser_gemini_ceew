@@ -42,13 +42,19 @@ CHART_RULES = "\n".join([
     "  ceew.heatmap(data, row, column, value, why='')  # two categorical columns and one value; for a wide table of "
     "numbers such as df.corr(), pass just the table: ceew.heatmap(matrix, why='')",
     "  sort: None (largest first), 'descending', 'ascending', 'alphabetical' or 'data' (keep the table's order); "
-    "only pass it if the question asks for an order. Time periods always stay in time order. Categories with a "
-    "natural order (bands such as AQI categories, age groups or income bands) keep that order: put the rows in that "
-    "order and pass sort='data'.",
+    "only pass it if the question asks for an order. Time periods stay in time order unless the question asks for "
+    "another. Categories with a natural order (bands such as AQI categories, age groups or income bands) keep that "
+    "order: put the rows in that order and pass sort='data'.",
+    "  Every chart function also takes as_asked=False and label_angle=None. When the question itself asks for the "
+    "chart type or its look (for example 'a pie chart', 'vertical bars', 'all 30 stations', 'largest first', 'labels "
+    "turned'), pass as_asked=True together with the option it asks for (orientation=, sort=, label_angle=90 or the "
+    "angle asked for). The chart is then drawn as asked, and the app notes where it departs from the CEEW chart "
+    "rules. Do not pass as_asked=True when the question does not ask for the chart or its look.",
     "  Pass arguments by these names only; do not pass title, xlabel, color, figsize or other plotting options.",
     "- Choose the chart from what the question compares (ranking, magnitude, change over time, part-to-whole, "
-    "distribution, correlation, deviation). Prefer the simplest chart that shows it. A chart named in the question is a "
-    "proposal: use it only if it fits; otherwise use the chart that fits.",
+    "distribution, correlation, deviation), preferring the simplest chart that shows it. When the question names a "
+    "chart, use that chart with as_asked=True; the app changes it only where it would misstate the data (for example "
+    "a pie of parts that do not add up to one whole).",
     "- Pass `why=`: one or two sentences naming the relationship (for example 'magnitude') and why this chart shows it. "
     "Base it only on the question and the column names.",
     "- Do NOT write titles, headlines, annotations, source lines or notes, and do not choose colours: the researcher "

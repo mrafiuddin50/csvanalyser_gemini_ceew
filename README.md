@@ -46,6 +46,11 @@ the work is split:
   up to 100% for pie and stacked 100% charts, bars start at zero and hold at most 15 categories, lines break at
   gaps, more than eight categories turn grey, highlights only when the question names them. These messages are
   shown to the researcher and never sent to Gemini.
+- **What the researcher asks for wins** over the layout and chart-type rules (orientation, at most 15 bars, pie
+  slices, slope categories, time order, label angle): when the question names the chart or its look, or the code
+  passes `as_asked=True`, the chart is drawn as asked with a yellow note naming the rule it departs from. The
+  accuracy rules hold regardless: parts of one whole for pies and 100% stacks (R1), bars from zero (R2), no second
+  axis (R4), nothing the data does not contain (R5), and lines that break at gaps.
 - **The researcher** writes the headline, source and note under each chart; each appears on the chart only once it
   has been entered, and no space is kept for it until then. The headline is checked locally for words that claim a cause or a record; it is never rewritten
   and never sent to Gemini (a headline states findings from the data).
